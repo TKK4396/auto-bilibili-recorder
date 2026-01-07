@@ -1,74 +1,95 @@
-name: Build Docker Images
+name: Build docker images
 
 on:
   push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME_CPU: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }}
   IMAGE_NAME_GPU: ${{ github.repository }}-gpu
 
 jobs:
-  build:
+
+  build_docker:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
-    strategy:
-      matrix:
-        # 修正 1: 使用 include 列表来定义矩阵项
-        include:
-          - name: cpu
-            image: ${{ env.IMAGE_NAME_CPU }}
-            # 修正 2: 将 args 定义为多行字符串，符合 build-push-action 的要求
-            args: |
-              COMMON_IMAGE=ubuntu:22.04
-          - name: gpu
-            image: ${{ env.IMAGE_NAME_GPU }}
-            args: |
-              COMMON_IMAGE=nvidia/cuda:12.1.0-base
-
     steps:
-      - name: 🔍 Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: 🐧 Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: 📦 Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 🔐 Login to ${{ env.REGISTRY }}
+        with:
+          fetch-depth: 0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🏷️ Extract Metadata
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }} # 注意变量名变化
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=sha
-
-      - name: 🏗️ Build and Push
-        uses: docker/build-push-action@v5
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          # 修正 3: 直接传递 args 变量
-          build-args: ${{ matrix.args }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: "COMMON_IMAGE=ubuntu:22.04"
+      - name: Build and push Docker image (ARM64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: "COMMON_IMAGE=ubuntu:22.04"
+  
+  build_docker_gpu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_GPU }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
