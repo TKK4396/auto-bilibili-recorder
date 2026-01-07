@@ -8,28 +8,29 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # 定义两个镜像名称
   IMAGE_NAME_CPU: ${{ github.repository }}
   IMAGE_NAME_GPU: ${{ github.repository }}-gpu
 
 jobs:
-  # 使用矩阵策略来避免重复代码
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
-    # 定义矩阵：一个是cpu构建，一个是gpu构建
     strategy:
       matrix:
-        build: 
-          - name: cpu # 构建名称
-            image: ${{ env.IMAGE_NAME_CPU }} # 对应的镜像名
-            args: COMMON_IMAGE=ubuntu:22.04 # 构建参数
+        # 修正 1: 使用 include 列表来定义矩阵项
+        include:
+          - name: cpu
+            image: ${{ env.IMAGE_NAME_CPU }}
+            # 修正 2: 将 args 定义为多行字符串，符合 build-push-action 的要求
+            args: |
+              COMMON_IMAGE=ubuntu:22.04
           - name: gpu
             image: ${{ env.IMAGE_NAME_GPU }}
-            args: COMMON_IMAGE=nvidia/cuda:12.1.0-base # 假设这是你的GPU基础镜像
+            args: |
+              COMMON_IMAGE=nvidia/cuda:12.1.0-base
 
     steps:
       - name: 🔍 Checkout
@@ -53,8 +54,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # 根据矩阵变量动态设置镜像名
-          images: ${{ env.REGISTRY }}/${{ matrix.build.image }}
+          images: ${{ env.REGISTRY }}/${{ matrix.image }} # 注意变量名变化
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -66,10 +66,8 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          # 如果你的Dockerfile支持通过参数切换基础镜像，使用下面这行
-          build-args: ${{ matrix.build.args }}
-          # 如果你有两个不同的Dockerfile（Dockerfile.cpu 和 Dockerfile.gpu），请注释掉上面一行，启用下面两行：
-          # dockerfile: ./Dockerfile.${{ matrix.build.name }}
+          # 修正 3: 直接传递 args 变量
+          build-args: ${{ matrix.args }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
