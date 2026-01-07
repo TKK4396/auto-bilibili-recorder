@@ -3,6 +3,12 @@ name: Build docker images
 on:
   push:
   pull_request:
+  workflow_dispatch: # 允许手动触发
+    inputs:
+      tag:
+        description: 'Docker image tag'
+        required: true
+        default: 'latest'
 
 env:
   REGISTRY: ghcr.io
