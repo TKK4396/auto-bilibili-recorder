@@ -1,39 +1,76 @@
-  build_docker_gpu:
+name: Build Docker Images
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  REGISTRY: ghcr.io
+  # 定义两个镜像名称
+  IMAGE_NAME_CPU: ${{ github.repository }}
+  IMAGE_NAME_GPU: ${{ github.repository }}-gpu
+
+jobs:
+  # 使用矩阵策略来避免重复代码
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4 # 更新版本
 
-      - name: Set up QEMU # 修复：添加这一行，否则多平台构建会失败
+    # 定义矩阵：一个是cpu构建，一个是gpu构建
+    strategy:
+      matrix:
+        build: 
+          - name: cpu # 构建名称
+            image: ${{ env.IMAGE_NAME_CPU }} # 对应的镜像名
+            args: COMMON_IMAGE=ubuntu:22.04 # 构建参数
+          - name: gpu
+            image: ${{ env.IMAGE_NAME_GPU }}
+            args: COMMON_IMAGE=nvidia/cuda:12.1.0-base # 假设这是你的GPU基础镜像
+
+    steps:
+      - name: 🔍 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐧 Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3 # 更新版本
+      - name: 📦 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log into registry
+      - name: 🔐 Login to ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3 # 更新版本
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      - name: 🏷️ Extract Metadata
         id: meta
-        uses: docker/metadata-action@v5 # 更新版本
+        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_GPU }}
+          # 根据矩阵变量动态设置镜像名
+          images: ${{ env.REGISTRY }}/${{ matrix.build.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5 # 更新版本
+      - name: 🏗️ Build and Push
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64 # 修复：合并平台，不要写两次
+          # 如果你的Dockerfile支持通过参数切换基础镜像，使用下面这行
+          build-args: ${{ matrix.build.args }}
+          # 如果你有两个不同的Dockerfile（Dockerfile.cpu 和 Dockerfile.gpu），请注释掉上面一行，启用下面两行：
+          # dockerfile: ./Dockerfile.${{ matrix.build.name }}
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: "COMMON_IMAGE=nvidia/cuda:12.1.0-base" # 假设这是你的GPU基础镜像
