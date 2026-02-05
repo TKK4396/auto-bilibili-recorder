@@ -270,7 +270,14 @@ class Session:
         audio_bitrate = 320
         video_bitrate = (max_size / total_time - audio_bitrate) - 500  # just to be safe
         max_video_bitrate = float(8000)  # BiliBili now re-encode every video anyways
-        video_bitrate = int(min(max_video_bitrate, video_bitrate))
+        # video_bitrate = int(min(max_video_bitrate, video_bitrate))
+
+        # === 添加码率范围限制 ===
+        MIN_VIDEO_BITRATE = 4000   # ← 您要添加的最低码率 (Kbps)，可根据需求调整
+
+        # 先保下限，再卡上限
+        video_bitrate = int(max(MIN_VIDEO_BITRATE, min(max_video_bitrate, video_bitrate_kbps)))
+
         video_res_x, video_res_y = self.get_resolution()
         ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
         -i "{self.output_path()['he_graph']}" \
