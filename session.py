@@ -267,16 +267,15 @@ class Session:
     async def process_video(self):
         total_time = sum([video.video_length_flv for video in self.videos])
         max_size = 8000_000 * 8  # Kb
-        audio_bitrate = 320
-        video_bitrate = (max_size / total_time - audio_bitrate) - 500  # just to be safe
-        max_video_bitrate = float(8000)  # BiliBili now re-encode every video anyways
-        # video_bitrate = int(min(max_video_bitrate, video_bitrate))
-
-        # === 添加码率范围限制 ===
-        MIN_VIDEO_BITRATE = 4000   # ← 您要添加的最低码率 (Kbps)，可根据需求调整
-
-        # 先保下限，再卡上限
-        video_bitrate = int(max(MIN_VIDEO_BITRATE, min(max_video_bitrate, video_bitrate_kbps)))
+     # === 修正2：分离计算与限制逻辑 ===
+        audio_bitrate_kbps = 320
+        safety_margin_kbps = 500
+        calculated_video_bitrate = total_bitrate_kbps - audio_bitrate_kbps - safety_margin_kbps
+    
+    # === 添加码率范围限制（您设定的4000K最低）===
+    MIN_VIDEO_BITRATE = 4000.0   # Kbps（根据720p/1080p需求调整）
+    MAX_VIDEO_BITRATE = 8000.0   # Kbps（B站重编码上限）
+    video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, calculated_video_bitrate)))
 
         video_res_x, video_res_y = self.get_resolution()
         ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
@@ -304,7 +303,7 @@ class Session:
         [out]ass='{self.output_path()['ass']}'[out_sub]" \
         -map "[out_sub]" -map 1:a ''' + \
                          (" -c:v h264_nvenc -preset slow  -threads 0 "
-                          if GPUInfo.check_empty() is not None else " -c:v libx264 -preset medium  -threads 0") + \
+                          if GPUInfo.check_empty() is not None else " -c:v libx264 -preset medium  -threads 0 ") + \
                          f'-b:v {video_bitrate}K' + f''' -b:a 320K -ar 44100  "{self.output_path()['danmaku_video']}" \
                     ''' + f'>> "{self.output_path()["video_log"]}" 2>&1'
         await async_wait_output(ffmpeg_command)
