@@ -273,9 +273,9 @@ class Session:
         calculated_video_bitrate = total_bitrate_kbps - audio_bitrate_kbps - safety_margin_kbps
     
     # === 添加码率范围限制（您设定的4000K最低）===
-    MIN_VIDEO_BITRATE = 4000.0   # Kbps（根据720p/1080p需求调整）
-    MAX_VIDEO_BITRATE = 8000.0   # Kbps（B站重编码上限）
-    video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, calculated_video_bitrate)))
+        MIN_VIDEO_BITRATE = 4000.0   # Kbps（根据720p/1080p需求调整）
+        MAX_VIDEO_BITRATE = 8000.0   # Kbps（B站重编码上限）
+        video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, calculated_video_bitrate)))
 
         video_res_x, video_res_y = self.get_resolution()
         ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
