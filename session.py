@@ -270,7 +270,7 @@ class Session:
      # === 修正2：分离计算与限制逻辑 ===
         audio_bitrate_kbps = 320
         safety_margin_kbps = 500
-        calculated_video_bitrate = total_bitrate_kbps - audio_bitrate_kbps - safety_margin_kbps
+        calculated_video_bitrate = max_size - audio_bitrate_kbps - safety_margin_kbps
     
     # === 添加码率范围限制（您设定的4000K最低）===
         MIN_VIDEO_BITRATE = 4000.0   # Kbps（根据720p/1080p需求调整）
