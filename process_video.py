@@ -20,4 +20,5 @@ async def respond_process():
 
 
 if __name__ == "__main__":
-    app.run(port=10261)
+    # 关键修改：添加 host='0.0.0.0' 以监听所有网络接口
+    app.run(host='0.0.0.0', port=10261, debug=True)
