@@ -37,6 +37,7 @@ class Video:
     video_resolution_x: int
     video_resolution_y: int
     video_length_flv: float
+    video_fps: float  # 新增：视频帧率
 
     def __init__(self, file_closed_event_json):
         flv_name = file_closed_event_json['EventData']['RelativePath']
@@ -69,7 +70,21 @@ class Video:
         self.video_resolution = str(video_resolution_str[0].decode('utf-8').strip())
         video_resolutions = self.video_resolution.split("x")
         self.video_resolution_x, self.video_resolution_y = int(video_resolutions[0]), int(video_resolutions[1])
+        # 获取帧率
+        fps_str = await async_wait_output(
+            f'ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate '
+            f'-of default=noprint_wrappers=1:nokey=1 "{self.flv_file_path()}"'
+        )
+        fps_value = fps_str[0].decode('utf-8').strip()
 
+        # 处理分数形式的帧率（如30000/1001）
+        if '/' in fps_value:
+            num, den = map(int, fps_value.split('/'))
+            self.video_fps = num / den
+        else:
+            self.video_fps = float(fps_value)
+
+        print(f"视频帧率: {self.video_fps}fps")
 
 class Session:
     session_id: str
@@ -266,16 +281,76 @@ class Session:
 
     async def process_video(self):
         total_time = sum([video.video_length_flv for video in self.videos])
-        max_size = 8000_000 * 8  # Kb
-     # === 修正2：分离计算与限制逻辑 ===
+
+        # === 获取视频分辨率和帧率 ===
+        # 假设第一个视频代表整个session的分辨率和帧率
+        reference_video = self.videos[0]
+
+        # 获取视频帧率（需要添加到Video类的query_meta方法中）
+        # 这里假设video_fps已经在Video类中定义
+        video_fps = getattr(reference_video, 'video_fps', 30.0)  # 默认30fps
+
+        video_res_x, video_res_y = self.get_resolution()
+
+        # === 根据分辨率和帧率计算推荐码率 ===
+        # B站推荐码率参考：https://www.bilibili.com/read/cv17931353
+        # 分辨率码率基准（基于30fps）
+        resolution_bitrate_base = {
+            # 分辨率 (宽x高): 推荐码率 (Kbps)
+            (1920, 1080): 2500,  # 1080p
+            (1280, 720): 1500,  # 720p
+            (854, 480): 1200,  # 480p
+            (640, 360): 800,  # 360p
+        }
+
+        # 帧率调整系数（60fps需要约1.5倍码率）
+        fps_adjustment = 1.0 + (video_fps - 30) / 60 * 0.5
+        fps_adjustment = max(0.8, min(1.5, fps_adjustment))  # 限制在0.8-1.5倍
+
+        # 查找最接近的分辨率基准
+        recommended_bitrate = None
+        min_distance = float('inf')
+
+        for (res_w, res_h), base_bitrate in resolution_bitrate_base.items():
+            # 计算分辨率差异（考虑宽高比）
+            distance = abs(video_res_x - res_w) + abs(video_res_y - res_h)
+            if distance < min_distance:
+                min_distance = distance
+                recommended_bitrate = base_bitrate
+
+        # 如果没有匹配，根据像素数量估算
+        if recommended_bitrate is None:
+            total_pixels = video_res_x * video_res_y
+            # 基于1080p (1920x1080=2,073,600像素) 6000Kbps的基准
+            base_1080p_pixels = 1920 * 1080
+            base_1080p_bitrate = 2500
+            recommended_bitrate = int(total_pixels / base_1080p_pixels * base_1080p_bitrate)
+
+        # 应用帧率调整
+        recommended_bitrate = int(recommended_bitrate * fps_adjustment)
+
+        # === 码率范围限制 ===
+        # B站上传限制：最大8000Kbps，最小根据分辨率调整
+        MAX_VIDEO_BITRATE = 18000  # Kbps（B站重编码上限）
+
+        # 根据分辨率设置最小码率
+        if video_res_x >= 1920 or video_res_y >= 1080:
+            MIN_VIDEO_BITRATE = 3500  # 1080p及以上
+        elif video_res_x >= 1280 or video_res_y >= 720:
+            MIN_VIDEO_BITRATE = 2000  # 720p
+        else:
+            MIN_VIDEO_BITRATE = 1200  # 低分辨率
+
+        # 确保码率在合理范围内
+        video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, recommended_bitrate)))
+
+        # === 音频码率和安全边际 ===
         audio_bitrate_kbps = 320
         safety_margin_kbps = 500
-        calculated_video_bitrate = max_size - audio_bitrate_kbps - safety_margin_kbps
-    
-    # === 添加码率范围限制（您设定的4000K最低）===
-        MIN_VIDEO_BITRATE = 4000.0   # Kbps（根据720p/1080p需求调整）
-        MAX_VIDEO_BITRATE = 8000.0   # Kbps（B站重编码上限）
-        video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, calculated_video_bitrate)))
+
+        print(f"视频信息: {video_res_x}x{video_res_y}@{video_fps}fps")
+        print(f"推荐码率: {recommended_bitrate}Kbps (调整后: {video_bitrate}Kbps)")
+        print(f"帧率调整系数: {fps_adjustment:.2f}")
 
         video_res_x, video_res_y = self.get_resolution()
         ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
