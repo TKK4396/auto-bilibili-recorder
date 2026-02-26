@@ -1,0 +1,23 @@
+CREATE TABLE `upload_task_record` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '任务唯一主键ID',
+    `session_id` VARCHAR(255) NOT NULL COMMENT '录制场次的唯一标识',
+    `video_path` VARCHAR(255) NOT NULL COMMENT '需要上传的视频文件本地路径',
+    `thumbnail_path` VARCHAR(255) COMMENT '视频封面本地路径',
+    `sc_path` VARCHAR(255) COMMENT 'SuperChat(醒目留言)记录文件路径',
+    `he_path` VARCHAR(255) COMMENT '高能进度条文件路径',
+    `subtitle_path` VARCHAR(255) COMMENT '弹幕/字幕文件路径',
+    `title` VARCHAR(255) COMMENT '上传的视频标题',
+    `source` VARCHAR(255) COMMENT '视频来源平台(如bilibili)',
+    `description` TEXT COMMENT '视频简介',
+    `tag` VARCHAR(255) COMMENT '视频标签，逗号分隔',
+    `channel_id` INT COMMENT 'B站分区ID',
+    `danmaku` BOOLEAN COMMENT '是否为带弹幕烘焙的视频 (1=是, 0=否)',
+    `account_name` VARCHAR(255) COMMENT '使用的上传账号名称',
+    `status` TINYINT DEFAULT 0 COMMENT '任务状态: 0=队列中, 1=上传中, 2=成功, 3=失败, 4=等待重试',
+    `error_msg` TEXT COMMENT '最后一次上传失败的错误信息',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '任务创建时间',
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录最后更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频自动上传任务记录表';
+
+数据库配置
+host='127.0.0.1', user='root', password='password', database='bilibili_recorder'

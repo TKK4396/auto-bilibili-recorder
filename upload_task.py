@@ -8,7 +8,7 @@ SPECIAL_SPACE = "\u2007"
 class UploadTask:
 
     def __init__(self, session_id, video_path, thumbnail_path, sc_path, he_path, subtitle_path,
-                 title, source, description, tag, channel_id, danmaku, account: UploaderAccount):
+                 title, source, description, tag, channel_id, danmaku, account: UploaderAccount, db_id=None):
         self.session_id = session_id
         self.video_path = video_path
         self.sc_path = sc_path
@@ -24,6 +24,7 @@ class UploadTask:
         self.account = account
         self.verify = self.account.verify
         self.trial = 0
+        self.db_id = db_id # <-- 新增赋值
 
     async def upload(self, session_dict: {str: str}):
 

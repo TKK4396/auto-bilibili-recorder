@@ -18,6 +18,8 @@ from session import Session, Video
 from subtitle_task import SubtitleTask
 from task_save import TaskSave
 from upload_task import UploadTask
+from db_manager import DBManager
+import traceback
 
 CONTINUE_SESSION_MINUTES = 5
 WAIT_SESSION_MINUTES = 6
@@ -55,15 +57,55 @@ class RecordUploadManager:
         self.subtitle_post_thread.start()
         self.video_uploading_thread = threading.Thread(target=lambda: self.video_processing_loop.run_forever())
         self.video_uploading_thread.start()
+        # --- 新增数据库及轮询线程 ---
+        # 请在这里修改为你的实际 MySQL 连接信息
+        self.db_manager = DBManager(host='127.0.0.1', user='root', password='password100', database='bilibili_recorder')
+        self.db_polling_thread = threading.Thread(target=self.db_poller)
+        self.db_polling_thread.start()
+        # ----------------------------
+
+        self.video_uploading_thread = threading.Thread(target=lambda: self.video_processing_loop.run_forever())
+        self.video_uploading_thread.start()
 
     def save_progress(self):
         with open(self.save_path, 'w') as file:
             yaml.dump(self.save.to_dict(), file, Dumper=yaml.Dumper)
 
+    # def video_uploader(self):
+    #     asyncio.set_event_loop(self.video_uploading_loop)
+    #     while True:
+    #         upload_task = self.video_upload_queue.get()
+    #         try:
+    #             first_video_comment = upload_task.session_id not in self.save.session_id_map
+    #             bv_id = sync(upload_task.upload(self.save.session_id_map))
+    #             sys.stdout.flush()
+    #             with self.save_lock:
+    #                 self.save.session_id_map[upload_task.session_id] = bv_id
+    #                 self.save_progress()
+    #             if first_video_comment:
+    #                 print("adding comment task to queue")
+    #                 self.comment_post_queue.put(
+    #                     CommentTask.from_upload_task(upload_task)
+    #                 )
+    #             print("adding subtitle task to queue")
+    #             self.subtitle_post_queue.put(
+    #                 SubtitleTask.from_upload_task(upload_task, bv_id)
+    #             )
+    #         except Exception:
+    #             if upload_task.trial < 5:
+    #                 upload_task.trial += 1
+    #                 self.video_upload_queue.put(upload_task)
+    #                 print(f"Upload failed: {upload_task.title}, retrying")
+    #             else:
+    #                 print(f"Upload failed too many times: {upload_task.title}")
+    #             print(traceback.format_exc())
     def video_uploader(self):
         asyncio.set_event_loop(self.video_uploading_loop)
         while True:
             upload_task = self.video_upload_queue.get()
+            if upload_task.db_id:
+                # 状态 1 代表 UPLOADING (上传中)
+                self.db_manager.update_status(upload_task.db_id, 1) # 开始上传
             try:
                 first_video_comment = upload_task.session_id not in self.save.session_id_map
                 bv_id = sync(upload_task.upload(self.save.session_id_map))
@@ -71,6 +113,11 @@ class RecordUploadManager:
                 with self.save_lock:
                     self.save.session_id_map[upload_task.session_id] = bv_id
                     self.save_progress()
+
+                if upload_task.db_id:
+                    # 状态 2 代表 SUCCESS (成功)
+                    self.db_manager.update_status(upload_task.db_id, 2) # 上传成功
+
                 if first_video_comment:
                     print("adding comment task to queue")
                     self.comment_post_queue.put(
@@ -80,12 +127,19 @@ class RecordUploadManager:
                 self.subtitle_post_queue.put(
                     SubtitleTask.from_upload_task(upload_task, bv_id)
                 )
-            except Exception:
+            except Exception as e:
+                error_msg = str(e)[:500] # 截取部分报错信息
                 if upload_task.trial < 5:
                     upload_task.trial += 1
+                    if upload_task.db_id:
+                        # 失败后还有机会，状态退回 0 (QUEUED)
+                        self.db_manager.update_status(upload_task.db_id, 0, f"Retrying... {error_msg}")
                     self.video_upload_queue.put(upload_task)
                     print(f"Upload failed: {upload_task.title}, retrying")
                 else:
+                    if upload_task.db_id:
+                        # 彻底失败，状态设为 3 (FAILED)
+                        self.db_manager.update_status(upload_task.db_id, 3, error_msg) # 最终失败
                     print(f"Upload failed too many times: {upload_task.title}")
                 print(traceback.format_exc())
 
@@ -200,8 +254,28 @@ class RecordUploadManager:
             self.save.video_name_history[session.session_id] = title
         description = Template(room_config.description).substitute(substitute_dict)
         await session.gen_early_video()
+
+        # 构建插入数据库的数据模版
+        base_db_task = {
+            'session_id': session.session_id,
+            'thumbnail_path': session.output_path()['thumbnail'],
+            'sc_path': session.output_path()['sc_file'],
+            'he_path': session.output_path()['he_file'],
+            'subtitle_path': session.output_path()['sc_srt'],
+            'title': title,
+            'source': room_config.source,
+            'description': description,
+            'tag': room_config.tags,
+            'channel_id': room_config.channel_id,
+            'account_name': uploader.name
+        }
+
         early_upload_task = None
         if session.early_video_path is not None:
+            db_task_early = base_db_task.copy()
+            db_task_early.update({'video_path': session.early_video_path, 'danmaku': False})
+            early_db_id = self.db_manager.insert_task(db_task_early) # 先入库，获取ID
+
             early_upload_task = UploadTask(
                 session_id=session.session_id,
                 video_path=session.early_video_path,
@@ -215,11 +289,18 @@ class RecordUploadManager:
                 tag=room_config.tags,
                 channel_id=room_config.channel_id,
                 danmaku=False,
-                account=uploader
+                account=uploader,
+                db_id=early_db_id # 传入ID
             )
             self.video_upload_queue.put(early_upload_task)
+
         await asyncio.sleep(WAIT_SESSION_MINUTES * 60)
         await session.gen_danmaku_video()
+
+        db_task_danmaku = base_db_task.copy()
+        db_task_danmaku.update({'video_path': session.output_path()['danmaku_video'], 'danmaku': True})
+        danmaku_db_id = self.db_manager.insert_task(db_task_danmaku) # 先入库，获取ID
+
         danmaku_upload_task = UploadTask(
             session_id=session.session_id,
             video_path=session.output_path()['danmaku_video'],
@@ -233,8 +314,10 @@ class RecordUploadManager:
             tag=room_config.tags,
             channel_id=room_config.channel_id,
             danmaku=True,
-            account=uploader
+            account=uploader,
+            db_id=danmaku_db_id # 传入ID
         )
+
         self.video_upload_queue.put(
             danmaku_upload_task
         )
@@ -284,3 +367,40 @@ class RecordUploadManager:
             elif update_json["EventType"] == "SessionEnded":
                 current_session.upload_task = \
                     asyncio.run_coroutine_threadsafe(self.upload_video(current_session), self.video_processing_loop)
+
+    def db_poller(self):
+        while True:
+            try:
+                # 查找被用户手动修改为 PENDING_RETRY 的任务
+                tasks = self.db_manager.get_tasks_by_status(4)
+                for task in tasks:
+                    account_name = task['account_name']
+                    # 从配置中找到对应的上传账号
+                    uploader = next((acc for name, acc in self.config.accounts.items() if acc.name == account_name), None)
+                    if uploader:
+                        upload_task = UploadTask(
+                            session_id=task['session_id'],
+                            video_path=task['video_path'],
+                            thumbnail_path=task['thumbnail_path'],
+                            sc_path=task['sc_path'],
+                            he_path=task['he_path'],
+                            subtitle_path=task['subtitle_path'],
+                            title=task['title'],
+                            source=task['source'],
+                            description=task['description'],
+                            tag=task['tag'],
+                            channel_id=task['channel_id'],
+                            danmaku=bool(task['danmaku']),
+                            account=uploader,
+                            db_id=task['id']
+                        )
+                        # 重置状态并放入上传队列
+                        self.db_manager.update_status(task['id'], 0,'')
+                        self.video_upload_queue.put(upload_task)
+                        print(f"从数据库恢复并重试任务: {task['title']}")
+                    else:
+                        print(f"未找到账号 {account_name}，无法重试任务: {task['title']}")
+                        self.db_manager.update_status(task['id'], 3, f"未找到账号 {account_name}")
+            except Exception as e:
+                print(f"数据库轮询异常: {e}")
+            time.sleep(30)  # 每 30 秒轮询一次
