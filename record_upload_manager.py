@@ -64,8 +64,6 @@ class RecordUploadManager:
         self.db_polling_thread.start()
         # ----------------------------
 
-        self.video_uploading_thread = threading.Thread(target=lambda: self.video_processing_loop.run_forever())
-        self.video_uploading_thread.start()
 
     def save_progress(self):
         with open(self.save_path, 'w') as file:

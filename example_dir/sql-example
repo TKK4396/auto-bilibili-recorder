@@ -20,4 +20,6 @@ CREATE TABLE `upload_task_record` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频自动上传任务记录表';
 
 数据库配置
-host='127.0.0.1', user='root', password='password', database='bilibili_recorder'
+host='127.0.0.1', user='root', password='password100', database='bilibili_recorder'
+
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password100';

@@ -5,6 +5,12 @@ ARG COMMON_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
 FROM ${COMMON_IMAGE}
 ENV TZ=Asia/Shanghai
 ARG DEBIAN_FRONTEND=noninteractive
+# --- 新增：安装 tzdata 并强制生成正确的本地时区文件 ---
+RUN apt-get update && apt-get install -y tzdata \
+    && ln -fs /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo ${TZ} > /etc/timezone \
+    && dpkg-reconfigure --frontend noninteractive tzdata
+# --------------------------------------------------------
 RUN apt-get update && apt-get install -y wget git apt-transport-https software-properties-common
 RUN add-apt-repository universe
 RUN apt-get update && apt-get install -y wget ffmpeg fonts-noto-color-emoji fonts-noto-cjk-extra cmake python3 python3-pip python3-venv curl unzip

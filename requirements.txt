@@ -12,3 +12,4 @@ rsa==4.9
 toml~=0.10.2
 urllib3==2.2.1
 pillow==10.2.0
+pymysql==1.1.0
