@@ -1,9 +1,72 @@
+import os
+import math
+import asyncio
 from bilibili_api.video_uploader import (
     VideoUploader, VideoUploaderPage, VideoEditor, VideoMeta, Lines, _choose_line)
 from recorder_config import UploaderAccount
 
 SPECIAL_SPACE = "\u2007"
 
+async def async_wait_output(command):
+    """异步执行终端命令，用于调用 ffprobe 和 ffmpeg"""
+    print(f"running: {command}")
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    return_value = await process.communicate()
+    return return_value
+
+async def split_video_if_needed(video_path):
+    """
+    检查视频大小，如果超过 14GB，则按约 8GB 为一段进行拆分。
+    返回拆分后的视频文件路径列表。
+    """
+    MAX_SIZE = 14 * 1024 * 1024 * 1024  # 14GB 限制阈值
+    SPLIT_SIZE = 8 * 1024 * 1024 * 1024 # 8GB 分割单位
+    file_size = os.path.getsize(video_path)
+
+    # 如果文件大小合规，直接返回原路径
+    if file_size <= MAX_SIZE:
+        return [video_path]
+
+    print(f"视频大小 {file_size} 字节超出 14GB 限制，正在按 8GB 分块拆分...")
+
+    # 1. 获取视频总时长 (秒)
+    duration_str = await async_wait_output(
+        f'ffprobe -v error -show_entries format=duration '
+        f'-of default=noprint_wrappers=1:nokey=1 "{video_path}"'
+    )
+    try:
+        duration = float(duration_str[0].decode('utf-8').strip())
+    except Exception as e:
+        print(f"获取视频时长失败，取消拆分: {e}")
+        return [video_path]
+
+    # 2. 计算需要拆分的段数以及每段的时长
+    num_parts = math.ceil(file_size / SPLIT_SIZE)
+    segment_time = math.ceil(duration / num_parts)
+
+    base_name, ext = os.path.splitext(video_path)
+    output_pattern = f"{base_name}_part%03d{ext}"
+
+    # 3. 使用 ffmpeg 的 segment 模块进行无损快速切片
+    split_cmd = f'ffmpeg -y -i "{video_path}" -c copy -map 0 -segment_time {segment_time} -f segment -reset_timestamps 1 "{output_pattern}"'
+    await async_wait_output(split_cmd)
+
+    # 4. 收集切片生成的文件
+    parts = []
+    for i in range(num_parts + 5): # 稍微多探测几个索引以防误差
+        part_name = f"{base_name}_part{i:03d}{ext}"
+        if os.path.exists(part_name):
+            parts.append(part_name)
+
+    if not parts:
+        print("视频拆分失败，尝试上传原视频。")
+        return [video_path]
+
+    return parts
 
 class UploadTask:
 
@@ -24,7 +87,7 @@ class UploadTask:
         self.account = account
         self.verify = self.account.verify
         self.trial = 0
-        self.db_id = db_id # <-- 新增赋值
+        self.db_id = db_id
 
     async def upload(self, session_dict: {str: str}):
 
@@ -32,6 +95,7 @@ class UploadTask:
             suffix = "弹幕高能版"
         else:
             suffix = "无弹幕版"
+
         if self.account.line == "auto":
             line = None
         elif self.account.line == "bda2":
@@ -45,6 +109,7 @@ class UploadTask:
         else:
             print(f"Unknown line: {self.account.line}, use auto instead.")
             line = None
+
         meta = VideoMeta(
             tid=self.channel_id,
             title=self.title + SPECIAL_SPACE + suffix,
@@ -63,20 +128,24 @@ class UploadTask:
         async def on_progress(data):
             print(data)
 
+        # =============== 修改点核心：动态构建分 P 列表 ===============
+        video_paths = await split_video_if_needed(self.video_path)
+        pages = []
+        for i, v_path in enumerate(video_paths):
+            # 如果发生了切片，且文件数量大于 1，我们在每个 P 后面加上标注区分
+            page_title = suffix if len(video_paths) == 1 else f"{suffix} (P{i+1})"
+            pages.append(VideoUploaderPage(path=v_path, title=page_title))
+
         uploader = VideoUploader(
-            pages=[
-                VideoUploaderPage(
-                    path=self.video_path,
-                    title=suffix
-                )
-            ],
+            pages=pages,
             meta=meta,
             credential=self.verify,
             line=line
         )
+        # ============================================================
+
         uploader.add_event_listener("__ALL__", on_progress)
         if self.session_id not in session_dict:
-
             result = await uploader.start()
             print(f"{meta.title} uploaded: {result}")
             return result['bvid']
@@ -94,16 +163,25 @@ class UploadTask:
                     }
                 )
                 print(f"{page.title} uploaded: {data['filename']}")
+
             meta_dict = {
                 "copyright": 2,
                 "desc_format_id": 0,
                 "dynamic": "",
                 "interactive": 0,
-                "new_web_edit": 1, "act_reserve_create": 0,
-                         "handle_staff": False, "topic_grey": 1, "no_reprint": 0, "subtitles": {
-                            "lan": "",
-                            "open": 0
-                         }, "web_os": 2, 'videos': videos}
+                "new_web_edit": 1,
+                "act_reserve_create": 0,
+                "handle_staff": False,
+                "topic_grey": 1,
+                "no_reprint": 0,
+                "subtitles": {
+                    "lan": "",
+                    "open": 0
+                },
+                "web_os": 2,
+                'videos': videos
+            }
+
             updater = VideoEditor(
                 bvid=session_dict[self.session_id],
                 meta=meta_dict,
@@ -111,6 +189,18 @@ class UploadTask:
             )
             updater.add_event_listener("__ALL__", on_progress)
             await updater._fetch_configs()
+
+            # =============== 修改点：保护老分 P 数据不被覆盖 ===============
+            old_videos = []
+            if "videos" in updater._VideoEditor__old_configs:
+                old_videos = updater._VideoEditor__old_configs["videos"]
+            elif "archive" in updater._VideoEditor__old_configs and "videos" in updater._VideoEditor__old_configs["archive"]:
+                old_videos = updater._VideoEditor__old_configs["archive"]["videos"]
+
+            # 将新上传的分 P 追加到老的列表之后
+            updater.meta["videos"] = old_videos + videos
+            # ============================================================
+
             updater.meta["desc"] = updater._VideoEditor__old_configs["archive"]["desc"]
             updater.meta["tag"] = updater._VideoEditor__old_configs["archive"]["tag"]
             updater.meta["copyright"] = updater._VideoEditor__old_configs["archive"]["copyright"]
