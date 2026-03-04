@@ -23,7 +23,7 @@ async def split_video_if_needed(video_path):
     检查视频大小，如果超过 15GB，则按约 8GB 为一段进行拆分。
     返回拆分后的视频文件路径列表。
     """
-    MAX_SIZE = 15 * 1024 * 1024 * 1024  # 15GB 限制阈值
+    MAX_SIZE = 14 * 1024 * 1024 * 1024  # 15GB 限制阈值
     SPLIT_SIZE = 8 * 1024 * 1024 * 1024 # 8GB 分割单位
     file_size = os.path.getsize(video_path)
 
@@ -31,7 +31,7 @@ async def split_video_if_needed(video_path):
     if file_size <= MAX_SIZE:
         return [video_path]
 
-    print(f"视频大小 {file_size} 字节超出 15GB 限制，正在按 8GB 分块拆分...")
+    print(f"视频大小 {file_size} 字节超出 14GB 限制，正在按 8GB 分块拆分...")
 
     # 1. 获取视频总时长 (秒)
     # 尝试一：获取全局容器时长
