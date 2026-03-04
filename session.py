@@ -70,6 +70,7 @@ class Video:
         self.video_resolution = str(video_resolution_str[0].decode('utf-8').strip())
         video_resolutions = self.video_resolution.split("x")
         self.video_resolution_x, self.video_resolution_y = int(video_resolutions[0]), int(video_resolutions[1])
+
         # 获取帧率
         fps_str = await async_wait_output(
             f'ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate '
@@ -353,9 +354,23 @@ class Session:
         print(f"帧率调整系数: {fps_adjustment:.2f}")
 
         video_res_x, video_res_y = self.get_resolution()
+
+        # ======== 核心优化：GPU 硬件检测与硬件加速策略 ========
+        # 检测系统中是否存在独立显卡 (GPU)
+        has_gpu = GPUInfo.check_empty() is not None
+
+        # 1. 硬件解码 (Hardware Decoding)
+        # 如果有 GPU，开启 -hwaccel auto 让显卡去承担原生 .flv 视频流的解码工作，从而大幅降低 CPU 负担
+        hwaccel_decode = "-hwaccel auto " if has_gpu else ""
+
+        # 2. 硬件编码 (Hardware Encoding)
+        # 如果有 GPU，调用 h264_nvenc 让显卡进行最后的画面压制输出。否则使用 libx264 使用 CPU 软编。
+        encoder_params = " -c:v h264_nvenc -preset slow -threads 0 " if has_gpu else " -c:v libx264 -preset medium -threads 0 "
+        # ========================================================
+
         ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
         -i "{self.output_path()['he_graph']}" \
-        -f concat \
+        {hwaccel_decode}-f concat \
         -safe 0 \
         -i "{self.output_path()['concat_file']}" \
         -t {total_time} \
@@ -377,8 +392,7 @@ class Session:
         [out_color][gray_crop]overlay=y=main_h-overlay_h[out];
         [out]ass='{self.output_path()['ass']}'[out_sub]" \
         -map "[out_sub]" -map 1:a ''' + \
-                         (" -c:v h264_nvenc -preset slow  -threads 0 "
-                          if GPUInfo.check_empty() is not None else " -c:v libx264 -preset medium  -threads 0 ") + \
+                         encoder_params + \
                          f'-b:v {video_bitrate}K' + f''' -b:a 320K -ar 44100  "{self.output_path()['danmaku_video']}" \
                     ''' + f'>> "{self.output_path()["video_log"]}" 2>&1'
         await async_wait_output(ffmpeg_command)
