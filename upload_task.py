@@ -20,10 +20,10 @@ async def async_wait_output(command):
 
 async def split_video_if_needed(video_path):
     """
-    检查视频大小，如果超过 14GB，则按约 8GB 为一段进行拆分。
+    检查视频大小，如果超过 15GB，则按约 8GB 为一段进行拆分。
     返回拆分后的视频文件路径列表。
     """
-    MAX_SIZE = 14 * 1024 * 1024 * 1024  # 14GB 限制阈值
+    MAX_SIZE = 15 * 1024 * 1024 * 1024  # 15GB 限制阈值
     SPLIT_SIZE = 8 * 1024 * 1024 * 1024 # 8GB 分割单位
     file_size = os.path.getsize(video_path)
 
@@ -31,17 +31,28 @@ async def split_video_if_needed(video_path):
     if file_size <= MAX_SIZE:
         return [video_path]
 
-    print(f"视频大小 {file_size} 字节超出 14GB 限制，正在按 8GB 分块拆分...")
+    print(f"视频大小 {file_size} 字节超出 15GB 限制，正在按 8GB 分块拆分...")
 
     # 1. 获取视频总时长 (秒)
-    duration_str = await async_wait_output(
-        f'ffprobe -v error -show_entries format=duration '
-        f'-of default=noprint_wrappers=1:nokey=1 "{video_path}"'
-    )
+    # 尝试一：获取全局容器时长
+    cmd_format = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_path}"'
+    stdout, stderr = await async_wait_output(cmd_format)
+    duration_str = stdout.decode('utf-8').strip()
+
+    # 如果没获取到（为空或者等于 N/A），尝试二：获取视频流的时长
+    if not duration_str or duration_str.lower() == 'n/a':
+        print("未读取到全局时长，尝试读取视频流时长...")
+        cmd_stream = f'ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=noprint_wrappers=1:nokey=1 "{video_path}"'
+        stdout, stderr = await async_wait_output(cmd_stream)
+        # 可能会返回多行（如果有多条视频流），我们取第一行
+        duration_str = stdout.decode('utf-8').strip().split('\n')[0].strip()
+
     try:
-        duration = float(duration_str[0].decode('utf-8').strip())
+        duration = float(duration_str)
+        print(f"成功获取视频时长: {duration} 秒")
     except Exception as e:
-        print(f"获取视频时长失败，取消拆分: {e}")
+        print(f"获取视频时长依然失败，取消拆分: {e}")
+        print(f"ffprobe 诊断信息 -> stdout: '{stdout.decode('utf-8')}' | stderr: '{stderr.decode('utf-8')}'")
         return [video_path]
 
     # 2. 计算需要拆分的段数以及每段的时长
@@ -63,9 +74,10 @@ async def split_video_if_needed(video_path):
             parts.append(part_name)
 
     if not parts:
-        print("视频拆分失败，尝试上传原视频。")
+        print("视频拆分失败（未检测到切片文件），尝试上传原视频。")
         return [video_path]
 
+    print(f"拆分完成，共生成 {len(parts)} 个视频文件。")
     return parts
 
 class UploadTask:
