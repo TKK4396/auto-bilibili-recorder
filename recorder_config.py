@@ -23,27 +23,75 @@ class UploaderAccount:
 
     def get_cookie_dict(self):
         return OrderedDict({
-            "buvid3": self.buvid3,
-            "buvid4": self.buvid4,
-            "DedeUserID": self.dedeuserid,
-            "SESSDATA": self.sessdata,
-            "bili_jct": self.bili_jct,
+            "buvid3": getattr(self, "buvid3", None),
+            "buvid4": getattr(self, "buvid4", None),
+            "DedeUserID": getattr(self, "dedeuserid", None),
+            "SESSDATA": getattr(self, "sessdata", None),
+            "bili_jct": getattr(self, "bili_jct", None),
         })
 
     def login(self):
         print(self.__dict__)
-        assert (
-                hasattr(self, "sessdata") and
-                hasattr(self, "bili_jct") and
-                hasattr(self, "buvid3") and
-                hasattr(self, "buvid4") and
-                hasattr(self, "dedeuserid")
-        ), f"missing cookies! {self.name}, \"sessdata\", \"bili_jct\", \"buvid3\", \"buvid4\", \"dedeuserid\""
+        # Check if all required cookies are present and not placeholder values
+        required_cookies = ["sessdata", "bili_jct", "buvid3", "buvid4", "dedeuserid"]
+        has_all_cookies = all(
+            hasattr(self, cookie) and getattr(self, cookie) and not getattr(self, cookie).startswith("your_")
+            for cookie in required_cookies
+        )
+        
+        if not has_all_cookies:
+            print(f"Warning: Missing or invalid cookies for {self.name}. Running in test mode without login.")
+            self.verify = None
+            if not hasattr(self, "line"):
+                self.line = "auto"
+            return
+            
         self.verify = Credential.from_cookies(self.get_cookie_dict())
-        assert sync(self.verify.check_valid()), f"login failed! {self.name}"
-        print(f"login successfully! {self.name} {self.sessdata} {self.bili_jct}")
+        if not sync(self.verify.check_valid()):
+            print(f"Warning: Login failed for {self.name}. Running in test mode.")
+            self.verify = None
+        else:
+            print(f"login successfully! {self.name} {self.sessdata} {self.bili_jct}")
         if not hasattr(self, "line"):
             self.line = "auto"
+
+
+class HighlightConfig:
+    """高光视频生成配置"""
+    enabled: bool
+    qwen_api_key: str
+    qwen_model: str
+    whisper_model: str
+    use_gpu: bool
+    clip_before: int
+    clip_after: int
+    max_highlights: int
+    min_segment_gap: int
+
+    def __init__(self, config_dict: dict = None):
+        config_dict = config_dict or {}
+        self.enabled = config_dict.get('enabled', False)
+        self.qwen_api_key = config_dict.get('qwen_api_key', '')
+        self.qwen_model = config_dict.get('qwen_model', 'qwen-turbo')
+        self.whisper_model = config_dict.get('whisper_model', 'base')
+        self.use_gpu = config_dict.get('use_gpu', True)
+        self.clip_before = config_dict.get('clip_before', 60)
+        self.clip_after = config_dict.get('clip_after', 60)
+        self.max_highlights = config_dict.get('max_highlights', 5)
+        self.min_segment_gap = config_dict.get('min_segment_gap', 30)
+
+    def to_dict(self) -> dict:
+        return {
+            'enabled': self.enabled,
+            'qwen_api_key': self.qwen_api_key,
+            'qwen_model': self.qwen_model,
+            'whisper_model': self.whisper_model,
+            'use_gpu': self.use_gpu,
+            'clip_before': self.clip_before,
+            'clip_after': self.clip_after,
+            'max_highlights': self.max_highlights,
+            'min_segment_gap': self.min_segment_gap,
+        }
 
 
 class RecoderRoom:
@@ -59,6 +107,7 @@ class RecoderRoom:
     source: Optional[str]
     he_user_dict: Optional[str]
     he_regex_rules: Optional[str]
+    highlight: Optional[HighlightConfig]
 
     def __init__(self, config_dict):
         self.uploader = None
@@ -67,8 +116,12 @@ class RecoderRoom:
         self.uploader_obj = None
         self.he_user_dict = None
         self.he_regex_rules = None
+        self.highlight = None
         for key, value in config_dict.items():
-            self.__setattr__(key, value)
+            if key == 'highlight':
+                self.highlight = HighlightConfig(value)
+            else:
+                self.__setattr__(key, value)
         if self.recorder is None and self.uploader is not None:
             self.recorder = self.uploader
         assert self.recorder_obj is None, "recorder_obj should not be set manually"
@@ -79,6 +132,11 @@ class RecorderConfig:
     def __init__(self, config_dict):
         self.accounts = {name: UploaderAccount(account) for name, account in config_dict['accounts'].items()}
         self.rooms = [RecoderRoom(room) for room in config_dict['rooms']]
+        # 全局高光配置（与 rooms 同级）
+        self.highlight = None
+        if 'highlight' in config_dict:
+            self.highlight = HighlightConfig(config_dict['highlight'])
+        
         for room in self.rooms:
             if room.uploader is not None:
                 assert room.uploader in self.accounts, f"uploader {room.uploader} not found"

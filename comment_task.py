@@ -51,13 +51,16 @@ def process_text(text, bvid):
 
 
 class CommentTask:
-    def __init__(self, sc_path, he_path, session_id, verify: Credential):
+    def __init__(self, sc_path, he_path, session_id, verify: Credential, highlight_summary: str = None):
         self.sc_path = sc_path
         self.he_path = he_path
+        self.highlight_summary = highlight_summary or ""
         self.sc_root_id = ""
         self.he_root_id = ""
+        self.highlight_root_id = ""  # 高光总结评论的 root id
         self.sc_progress = 0
         self.he_progress = 0
+        self.highlight_posted = False  # 高光总结是否已发布
         self.session_id = session_id
         self.start_date = datetime.datetime.now(datetime.timezone.utc)
         self.verify = verify
@@ -67,10 +70,13 @@ class CommentTask:
         return {
             "sc_path": self.sc_path,
             "he_path": self.he_path,
+            "highlight_summary": self.highlight_summary,
             "sc_root_id": self.sc_root_id,
             "he_root_id": self.he_root_id,
+            "highlight_root_id": self.highlight_root_id,
             "sc_progress": self.sc_progress,
             "he_progress": self.he_progress,
+            "highlight_posted": self.highlight_posted,
             "session_id": self.session_id,
             "start_date": self.start_date,
             "credentials_dict": self.verify.get_cookies(),
@@ -160,6 +166,22 @@ class CommentTask:
                         credential=self.verify
                     )
                     self.sc_progress = i + 1
+            
+            # 发布高光总结评论
+            if self.highlight_summary and not self.highlight_posted:
+                print(f"Posting highlight summary comment")
+                try:
+                    await send_comment(
+                        self.highlight_summary,
+                        oid=target_video.get_aid(),
+                        type_=comment.CommentResourceType.VIDEO,
+                        credential=self.verify
+                    )
+                    self.highlight_posted = True
+                    print(f"Highlight summary comment posted successfully")
+                except (bilibili_api.ApiException, bilibili_api.ResponseCodeException) as e:
+                    print(f"Failed to post highlight summary comment: {e}")
+                    # 不算作失败，继续其他评论
         except (bilibili_api.ApiException, bilibili_api.ResponseCodeException):
             print("Comment posting failed")
             print(print(traceback.format_exc()))

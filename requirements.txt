@@ -13,3 +13,7 @@ toml~=0.10.2
 urllib3==2.2.1
 pillow==10.2.0
 pymysql==1.1.0
+
+# 高光视频生成依赖
+dashscope>=1.14.0
+faster-whisper>=0.10.0

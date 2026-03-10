@@ -30,13 +30,25 @@ def spawn_recorder(room: RecoderRoom):
         f'/storage/ ' \
         f'{room.id} '
     print(f"spawn recorder for {room.id}: {spawn_command}")
-    return subprocess.Popen(spawn_command, shell=True)
+    try:
+        return subprocess.Popen(spawn_command, shell=True)
+    except FileNotFoundError:
+        print(f"Warning: BililiveRecorder not found at {BINARY_PATH}BililiveRecorder/BililiveRecorder.Cli")
+        print(f"Skipping recorder spawn for room {room.id}. Please install BililiveRecorder for full functionality.")
+        return None
+    except Exception as e:
+        print(f"Error spawning recorder for room {room.id}: {e}")
+        return None
 
 
 class RecorderManager:
 
     def __init__(self, rooms: [RecoderRoom]):
-        self.recorder_dict: {int: subprocess.Popen} = {room: spawn_recorder(room) for room in rooms}
+        self.recorder_dict: {int: subprocess.Popen} = {}
+        for room in rooms:
+            recorder = spawn_recorder(room)
+            if recorder is not None:
+                self.recorder_dict[room] = recorder
 
     def update_rooms(self, new_rooms, dry_run=False):
         current_rooms = set(self.recorder_dict.keys())

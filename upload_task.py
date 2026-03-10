@@ -104,6 +104,21 @@ class UploadTask:
         self.verify = self.account.verify
         self.trial = 0
         self.db_id = db_id
+        # 多视频分 P 上传支持
+        self.multi_part_videos = None  # [(video_path, title), ...]
+        self.multi_part_titles = None  # ["P1标题", "P2标题", ...]
+
+    def set_multi_part(self, part_videos: list, part_titles: list = None):
+        """
+        设置多视频分 P 上传
+        
+        Args:
+            part_videos: 视频路径列表
+            part_titles: 各分 P 标题列表（可选）
+        """
+        self.multi_part_videos = part_videos
+        self.multi_part_titles = part_titles or [f"P{i+1}" for i in range(len(part_videos))]
+        print(f"Set multi-part upload: {len(part_videos)} videos with titles: {self.multi_part_titles}")
 
     async def upload(self, session_dict: {str: str}):
 
@@ -145,20 +160,42 @@ class UploadTask:
             print(data)
 
         # =============== 修改点核心：捕获拆分异常并阻断重试 ===============
-        try:
-            video_paths = await split_video_if_needed(self.video_path)
-        except Exception as e:
-            # 捕获到视频损坏或切片失败等致命错误时
-            # 将 trial 设为极大值 (999)，强制 record_upload_manager 跳过重试机制
-            self.trial = 999
-            # 把异常继续抛给外层的 try...except 捕获，以记录进数据库
-            raise e
+        # 支持多视频分 P 上传
+        all_video_paths = []
+        all_page_titles = []
+        
+        if self.multi_part_videos:
+            # 多视频分 P 模式
+            for i, video_path in enumerate(self.multi_part_videos):
+                try:
+                    split_paths = await split_video_if_needed(video_path)
+                    part_title = self.multi_part_titles[i] if self.multi_part_titles else f"P{i+1}"
+                    for j, v_path in enumerate(split_paths):
+                        all_video_paths.append(v_path)
+                        if len(split_paths) == 1:
+                            all_page_titles.append(part_title)
+                        else:
+                            all_page_titles.append(f"{part_title} ({j+1})")
+                except Exception as e:
+                    self.trial = 999
+                    raise e
+        else:
+            # 单视频模式
+            try:
+                video_paths = await split_video_if_needed(self.video_path)
+            except Exception as e:
+                self.trial = 999
+                raise e
+            
+            for i, v_path in enumerate(video_paths):
+                all_video_paths.append(v_path)
+                page_title = suffix if len(video_paths) == 1 else f"{suffix} (P{i+1})"
+                all_page_titles.append(page_title)
         # ============================================================
 
         pages = []
-        for i, v_path in enumerate(video_paths):
-            page_title = suffix if len(video_paths) == 1 else f"{suffix} (P{i+1})"
-            pages.append(VideoUploaderPage(path=v_path, title=page_title))
+        for i, v_path in enumerate(all_video_paths):
+            pages.append(VideoUploaderPage(path=v_path, title=all_page_titles[i]))
 
         uploader = VideoUploader(
             pages=pages,

@@ -58,6 +58,10 @@ RUN . venv/bin/activate && \
     pip3 install --upgrade -r requirements.txt && \
     pip3 install git+https://github.com/valkjsaaa/danmaku_tools.git@c7d86d10f157066ca24196b4222d9ef291e8e78e
 
+# Pre-download faster-whisper model (optional, for faster startup)
+# The model will be downloaded on first use if not pre-downloaded
+# RUN . venv/bin/activate && python3 -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cuda', compute_type='float16')"
+
 RUN wget https://raw.githubusercontent.com/valkjsaaa/Bilibili-Toolkit/7b86a61214149cc3f790d02d5d06ecd7540b9bdb/bilibili.py
 COPY *.py ./
 

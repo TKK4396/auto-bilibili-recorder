@@ -30,7 +30,7 @@ class RecordUploadManager:
     def __init__(self, config_path, save_path):
         self.config_path = config_path
         self.save_path = save_path
-        with open(config_path, 'r') as file:
+        with open(config_path, 'r', encoding='utf-8') as file:
             self.config = RecorderConfig(yaml.load(file, Loader=yaml.FullLoader))
         if os.path.isfile(save_path):
             with open(save_path, 'r') as file:
@@ -295,6 +295,27 @@ class RecordUploadManager:
         await asyncio.sleep(WAIT_SESSION_MINUTES * 60)
         await session.gen_danmaku_video()
 
+        # 生成高光视频（使用全局配置）
+        highlight_video_path = None
+        highlight_summary = None
+        highlight_config = None
+        # 优先使用全局高光配置
+        if self.config.highlight and self.config.highlight.enabled:
+            print(f"Highlight generation enabled (global config)")
+            highlight_config = self.config.highlight.to_dict()
+            try:
+                highlight_result = await session.gen_highlight_video(highlight_config)
+                if highlight_result:
+                    highlight_video_path = highlight_result.video_path
+                    highlight_summary = highlight_result.summary
+                    print(f"Highlight video generated: {highlight_video_path}")
+                    print(f"Highlight summary: {highlight_summary}")
+                else:
+                    print("Failed to generate highlight video")
+            except Exception as e:
+                print(f"Error generating highlight video: {e}")
+                traceback.print_exc()
+
         db_task_danmaku = base_db_task.copy()
         db_task_danmaku.update({'video_path': session.output_path()['danmaku_video'], 'danmaku': True})
         danmaku_db_id = self.db_manager.insert_task(db_task_danmaku) # 先入库，获取ID
@@ -316,13 +337,27 @@ class RecordUploadManager:
             db_id=danmaku_db_id # 传入ID
         )
 
+        # 如果有高光视频，设置为分 P 上传模式
+        if highlight_video_path and os.path.exists(highlight_video_path):
+            danmaku_upload_task.set_multi_part(
+                part_videos=[session.output_path()['danmaku_video'], highlight_video_path],
+                part_titles=["完整录播", "高光时刻"]
+            )
+            print(f"Set multi-part upload with highlight video")
+
         self.video_upload_queue.put(
             danmaku_upload_task
         )
         if early_upload_task is None:
-            self.comment_post_queue.put(
-                CommentTask.from_upload_task(danmaku_upload_task)
+            # 创建评论任务，包含高光总结
+            comment_task = CommentTask(
+                sc_path=session.output_path()['sc_file'],
+                he_path=session.output_path()['he_file'],
+                session_id=session.session_id,
+                verify=uploader.verify,
+                highlight_summary=highlight_summary
             )
+            self.comment_post_queue.put(comment_task)
 
     async def handle_update(self, update_json: dict):
         if update_json["EventType"] not in [

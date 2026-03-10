@@ -12,6 +12,7 @@ from gpuinfo import GPUInfo
 
 from commons import BINARY_PATH
 from recorder_config import RecoderRoom
+from highlight_generator import HighlightGenerator, generate_highlight_video, HighlightResult
 
 
 async def async_wait_output(command):
@@ -149,6 +150,7 @@ class Session:
             "ass": self.output_base_path() + ".ass",
             "early_video": self.output_base_path() + ".flv",
             "danmaku_video": self.output_base_path() + ".bar.mp4",
+            "highlight_video": self.output_base_path() + ".bar.highlight.mp4",
             "concat_file": self.output_base_path() + ".concat.txt",
             "thumbnail": self.output_base_path() + ".thumb.png",
             "he_graph": self.output_base_path() + ".he.png",
@@ -159,6 +161,7 @@ class Session:
             "he_pos": self.output_base_path() + ".he_pos.txt",
             "extras_log": self.output_base_path() + ".extras.log",
             "video_log": self.output_base_path() + ".video.log",
+            "highlight_log": self.output_base_path() + ".highlight.log",
         }
 
     async def merge_xml(self):
@@ -414,6 +417,106 @@ class Session:
             print(f"No video in session for {self.room_id}@{self.start_time}, skip!")
             return
         await self.process_video()
+
+    def load_danmaku_energy_data(self) -> list:
+        """加载弹幕能量数据"""
+        he_file = self.output_path()['he_file']
+        if not os.path.exists(he_file):
+            print(f"Dammaku energy file not found: {he_file}")
+            return []
+        
+        try:
+            danmaku_data = []
+            with open(he_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # 格式: time, energy
+                    parts = line.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            danmaku_data.append({
+                                'time': float(parts[0]),
+                                'energy': float(parts[1])
+                            })
+                        except ValueError:
+                            continue
+            print(f"Loaded {len(danmaku_data)} danmaku energy data points")
+            return danmaku_data
+        except Exception as e:
+            print(f"Error loading danmaku energy data: {e}")
+            return []
+
+    async def gen_highlight_video(self, highlight_config: dict = None) -> Optional['HighlightResult']:
+        """
+        生成高光视频
+        
+        Args:
+            highlight_config: 高光生成配置，包含：
+                - enabled: 是否启用
+                - qwen_api_key: 阿里云千问 API Key
+                - qwen_model: 千问模型
+                - whisper_model: Whisper 模型
+                - use_gpu: 是否使用 GPU
+                - clip_before: 高光前多少秒
+                - clip_after: 高光后多少秒
+        
+        Returns:
+            HighlightResult 包含视频路径、总结和高光片段，失败返回 None
+        """
+        if len(self.videos) == 0:
+            print(f"No video in session for {self.room_id}@{self.start_time}, skip highlight generation!")
+            return None
+        
+        danmaku_video_path = self.output_path()['danmaku_video']
+        if not os.path.exists(danmaku_video_path):
+            print(f"Danmaku video not found: {danmaku_video_path}")
+            return None
+        
+        # 合并默认配置和用户配置
+        default_config = {
+            'enabled': True,
+            'qwen_api_key': '',
+            'qwen_model': 'qwen-turbo',
+            'whisper_model': 'base',
+            'use_gpu': True,
+            'clip_before': 60,
+            'clip_after': 60,
+        }
+        if highlight_config:
+            default_config.update(highlight_config)
+        
+        if not default_config.get('enabled', True):
+            print("Highlight generation is disabled")
+            return None
+        
+        print(f"Generating highlight video for session {self.session_id}")
+        
+        # 加载弹幕能量数据
+        danmaku_data = self.load_danmaku_energy_data()
+        
+        # 创建高光生成器并生成视频
+        generator = HighlightGenerator(default_config)
+        result = await generator.generate_highlight(
+            video_path=danmaku_video_path,
+            danmaku_data=danmaku_data,
+            output_path=self.output_path()['highlight_video'],
+            log_path=self.output_path()['highlight_log']
+        )
+        
+        if result:
+            print(f"Highlight video generated: {result.video_path}")
+            print(f"Highlight summary: {result.summary}")
+            # 保存总结到文件，用于评论
+            summary_path = self.output_path()['highlight_video'].replace('.mp4', '.summary.txt')
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                f.write(result.summary)
+            print(f"Summary saved to: {summary_path}")
+        else:
+            print("Failed to generate highlight video")
+        
+        return result
 
 
 if __name__ == '__main__':

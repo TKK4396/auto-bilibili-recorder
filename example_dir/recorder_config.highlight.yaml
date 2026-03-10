@@ -1,0 +1,42 @@
+# Bilibili 录播配置文件 - 带高光视频生成功能
+# 此配置示例展示如何启用高光视频生成功能
+
+accounts:
+  test_bot:
+    name: TestBot
+    # 以下信息获取见：https://nemo2011.github.io/bilibili-api/#/get-credential
+    sessdata: "your_sessdata"
+    bili_jct: "your_bili_jct"
+    buvid3: "your_buvid3"
+    buvid4: "your_buvid4"
+    dedeuserid: "your_dedeuserid"
+    line: "kodo"  # 上传线路
+
+# 高光视频生成配置（全局配置，与 rooms 同级）
+highlight:
+  enabled: true  # 是否启用高光视频生成
+  qwen_api_key: "sk-xxx"  # 阿里云千问 API Key
+  qwen_model: "qwen-turbo"  # 千问模型：qwen-turbo, qwen-plus, qwen-max
+  whisper_model: "base"  # Whisper 模型：tiny, base, small, medium, large
+  use_gpu: true  # 是否使用 GPU 加速语音识别
+  clip_before: 60  # 高光片段前多少秒
+  clip_after: 60  # 高光片段后多少秒
+  max_highlights: 5  # 最大高光片段数
+  min_segment_gap: 30  # 最小片段间隔秒数
+
+rooms:
+  - id: 128308  # 直播间ID
+    uploader: test_bot
+    tags: "录播,直播录屏"
+    channel_id: 21  # 分区ID
+    title: "【$name】$yy年$mm月$dd日 $title"
+    source: "https://live.bilibili.com/128308"
+    description: "由 $uploader_name 录播脚本上传"
+
+# 高光视频生成功能说明：
+# 1. 从弹幕视频中提取音频
+# 2. 使用 faster-whisper 进行语音转文字（支持 GPU 加速）
+# 3. 调用阿里云千问 API 分析文字内容，识别高光片段
+# 4. 结合弹幕频率数据，确定最终的高光片段
+# 5. 截取高光片段并添加百叶窗转场效果
+# 6. 将高光视频作为 P2 与原视频一起上传到 B 站

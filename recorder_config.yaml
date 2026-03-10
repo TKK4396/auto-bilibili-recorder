@@ -1,0 +1,18 @@
+# Bilibili Recorder Config File
+# Test config for local development
+
+accounts:
+  test_bot:
+    name: TestBot
+    sessdata: "your_sessdata_here"
+    bili_jct: "your_bili_jct_here"
+    line: "kodo"
+
+rooms:
+  - id: 128308
+    uploader: test_bot
+    tags: "recording,livestream"
+    channel_id: 21
+    title: "[$name] $yy-$mm-$dd $title"
+    source: "https://live.bilibili.com/128308"
+    description: "Uploaded by $uploader_name"
