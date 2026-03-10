@@ -19,13 +19,8 @@ except ImportError:
     WHISPER_AVAILABLE = False
     print("Warning: faster-whisper not installed. Speech-to-text will be disabled.")
 
-try:
-    import dashscope
-    from dashscope import Generation
-    DASHSCOPE_AVAILABLE = True
-except ImportError:
-    DASHSCOPE_AVAILABLE = False
-    print("Warning: dashscope not installed. AI analysis will be disabled.")
+import requests
+DEEPSEEK_AVAILABLE = True  # requests 总是可用
 
 
 @dataclass
@@ -74,8 +69,8 @@ class HighlightGenerator:
         
         Args:
             config: 配置字典，包含以下键：
-                - qwen_api_key: 阿里云千问 API Key
-                - qwen_model: 千问模型名称（默认 qwen-turbo）
+                - deepseek_api_key: DeepSeek API Key
+                - deepseek_model: DeepSeek 模型名称（默认 deepseek-chat）
                 - whisper_model: Whisper 模型大小（默认 base）
                 - use_gpu: 是否使用 GPU（默认 True）
                 - clip_before: 高光前多少秒（默认 60）
@@ -86,8 +81,8 @@ class HighlightGenerator:
         self.config = config or {}
         
         # 默认配置
-        self.qwen_api_key = self.config.get('qwen_api_key', '')
-        self.qwen_model = self.config.get('qwen_model', 'qwen-turbo')
+        self.deepseek_api_key = self.config.get('deepseek_api_key', '')
+        self.deepseek_model = self.config.get('deepseek_model', 'deepseek-chat')
         self.whisper_model_size = self.config.get('whisper_model', 'base')
         self.use_gpu = self.config.get('use_gpu', True)
         self.clip_before = self.config.get('clip_before', 60)
@@ -98,10 +93,6 @@ class HighlightGenerator:
         
         # 初始化 Whisper 模型（延迟加载）
         self._whisper_model = None
-        
-        # 设置阿里云 API Key
-        if self.qwen_api_key and DASHSCOPE_AVAILABLE:
-            dashscope.api_key = self.qwen_api_key
     
     @property
     def whisper_model(self):
@@ -185,9 +176,9 @@ class HighlightGenerator:
             traceback.print_exc()
             return []
     
-    def analyze_with_qwen(self, transcription: List[dict], danmaku_data: List[dict] = None) -> List[HighlightSegment]:
+    def analyze_with_deepseek(self, transcription: List[dict], danmaku_data: List[dict] = None) -> List[HighlightSegment]:
         """
-        使用阿里云千问分析文字内容，识别高光片段
+        使用 DeepSeek 分析文字内容，识别高光片段
         
         Args:
             transcription: 转录结果列表
@@ -196,8 +187,8 @@ class HighlightGenerator:
         Returns:
             高光片段列表
         """
-        if not DASHSCOPE_AVAILABLE or not self.qwen_api_key:
-            print("Dashscope not available or API key not set, skipping AI analysis")
+        if not self.deepseek_api_key:
+            print("DeepSeek API key not set, skipping AI analysis")
             return []
         
         if not transcription:
@@ -250,22 +241,32 @@ class HighlightGenerator:
 - 优先选择有高弹幕互动的时间段
 - 只返回 JSON，不要有其他文字"""
 
-        print("Analyzing content with Qwen...")
+        print("Analyzing content with DeepSeek...")
         
         try:
-            response = Generation.call(
-                model=self.qwen_model,
-                prompt=prompt,
-                max_tokens=2000,
-                temperature=0.7
+            # 调用 DeepSeek API
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.deepseek_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.deepseek_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2000,
+                    "temperature": 0.7
+                },
+                timeout=60
             )
             
             if response.status_code != 200:
-                print(f"Qwen API error: {response.code} - {response.message}")
+                print(f"DeepSeek API error: {response.status_code} - {response.text}")
                 return []
             
-            result_text = response.output.text
-            print(f"Qwen response: {result_text[:500]}...")
+            result = response.json()
+            result_text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            print(f"DeepSeek response: {result_text[:500]}...")
             
             # 解析 JSON
             # 尝试提取 JSON 部分
@@ -273,10 +274,10 @@ class HighlightGenerator:
             json_end = result_text.rfind('}') + 1
             if json_start >= 0 and json_end > json_start:
                 json_str = result_text[json_start:json_end]
-                result = json.loads(json_str)
+                parsed = json.loads(json_str)
                 
                 highlights = []
-                for h in result.get('highlights', []):
+                for h in parsed.get('highlights', []):
                     highlights.append(HighlightSegment(
                         start_time=float(h.get('start_time', 0)),
                         end_time=float(h.get('end_time', 0)),
@@ -293,6 +294,9 @@ class HighlightGenerator:
                 
         except json.JSONDecodeError as e:
             print(f"JSON decode error: {e}")
+            return []
+        except requests.exceptions.Timeout:
+            print("DeepSeek API timeout")
             return []
         except Exception as e:
             print(f"AI analysis error: {e}")
@@ -741,8 +745,8 @@ class HighlightGenerator:
         if not highlight_texts:
             return "高光时刻"
         
-        # 如果有千问 API，使用 AI 生成总结
-        if DASHSCOPE_AVAILABLE and self.qwen_api_key:
+        # 如果有 DeepSeek API，使用 AI 生成总结
+        if self.deepseek_api_key:
             try:
                 summary_parts = []
                 for h in highlight_texts:
@@ -757,15 +761,24 @@ class HighlightGenerator:
 2. 突出每个高光点的精彩之处
 3. 保持简洁，适合作为视频评论"""
 
-                response = Generation.call(
-                    model=self.qwen_model,
-                    prompt=prompt,
-                    max_tokens=300,
-                    temperature=0.8
+                response = requests.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.deepseek_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.deepseek_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 300,
+                        "temperature": 0.8
+                    },
+                    timeout=30
                 )
                 
                 if response.status_code == 200:
-                    summary = response.output.text.strip()
+                    result = response.json()
+                    summary = result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
                     print(f"Generated highlight summary: {summary}")
                     return summary
             except Exception as e:
@@ -828,7 +841,7 @@ class HighlightGenerator:
             # 3. AI 分析
             ai_highlights = []
             if transcription:
-                ai_highlights = self.analyze_with_qwen(transcription, danmaku_data)
+                ai_highlights = self.analyze_with_deepseek(transcription, danmaku_data)
             
             # 4. 获取视频时长
             stdout, stderr, returncode = await async_run_command(

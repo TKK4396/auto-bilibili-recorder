@@ -59,8 +59,8 @@ class UploaderAccount:
 class HighlightConfig:
     """高光视频生成配置"""
     enabled: bool
-    qwen_api_key: str
-    qwen_model: str
+    deepseek_api_key: str
+    deepseek_model: str
     whisper_model: str
     use_gpu: bool
     clip_before: int
@@ -71,8 +71,8 @@ class HighlightConfig:
     def __init__(self, config_dict: dict = None):
         config_dict = config_dict or {}
         self.enabled = config_dict.get('enabled', False)
-        self.qwen_api_key = config_dict.get('qwen_api_key', '')
-        self.qwen_model = config_dict.get('qwen_model', 'qwen-turbo')
+        self.deepseek_api_key = config_dict.get('deepseek_api_key', '')
+        self.deepseek_model = config_dict.get('deepseek_model', 'deepseek-chat')
         self.whisper_model = config_dict.get('whisper_model', 'base')
         self.use_gpu = config_dict.get('use_gpu', True)
         self.clip_before = config_dict.get('clip_before', 60)
@@ -83,8 +83,8 @@ class HighlightConfig:
     def to_dict(self) -> dict:
         return {
             'enabled': self.enabled,
-            'qwen_api_key': self.qwen_api_key,
-            'qwen_model': self.qwen_model,
+            'deepseek_api_key': self.deepseek_api_key,
+            'deepseek_model': self.deepseek_model,
             'whisper_model': self.whisper_model,
             'use_gpu': self.use_gpu,
             'clip_before': self.clip_before,
