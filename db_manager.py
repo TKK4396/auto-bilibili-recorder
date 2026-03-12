@@ -17,8 +17,8 @@ class DBManager:
     def insert_task(self, task_data):
         sql = """
             INSERT INTO upload_task_record
-            (session_id, video_path, thumbnail_path, sc_path, he_path, subtitle_path, title, source, description, tag, channel_id, danmaku, account_name, status)
-            VALUES (%(session_id)s, %(video_path)s, %(thumbnail_path)s, %(sc_path)s, %(he_path)s, %(subtitle_path)s, %(title)s, %(source)s, %(description)s, %(tag)s, %(channel_id)s, %(danmaku)s, %(account_name)s, 0)
+            (session_id, room_id, video_path, thumbnail_path, sc_path, he_path, subtitle_path, title, source, description, tag, channel_id, danmaku, account_name, status, extra_info)
+            VALUES (%(session_id)s, %(room_id)s, %(video_path)s, %(thumbnail_path)s, %(sc_path)s, %(he_path)s, %(subtitle_path)s, %(title)s, %(source)s, %(description)s, %(tag)s, %(channel_id)s, %(danmaku)s, %(account_name)s, 0, %(extra_info)s)
         """
         with self.get_connection() as conn:
             with conn.cursor() as cursor:

@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 import traceback
+import json
 from queue import Queue
 from string import Template
 
@@ -256,6 +257,7 @@ class RecordUploadManager:
         # 构建插入数据库的数据模版
         base_db_task = {
             'session_id': session.session_id,
+            'room_id': room_config.id,
             'thumbnail_path': session.output_path()['thumbnail'],
             'sc_path': session.output_path()['sc_file'],
             'he_path': session.output_path()['he_file'],
@@ -265,7 +267,8 @@ class RecordUploadManager:
             'description': description,
             'tag': room_config.tags,
             'channel_id': room_config.channel_id,
-            'account_name': uploader.name
+            'account_name': uploader.name,
+            'extra_info': None
         }
 
         early_upload_task = None
@@ -318,6 +321,18 @@ class RecordUploadManager:
 
         db_task_danmaku = base_db_task.copy()
         db_task_danmaku.update({'video_path': session.output_path()['danmaku_video'], 'danmaku': True})
+
+        part_videos = None
+        part_titles = None
+        # 如果有高光视频，准备分 P 数据并序列化到 extra_info
+        if highlight_video_path and os.path.exists(highlight_video_path):
+            part_videos = [session.output_path()['danmaku_video'], highlight_video_path]
+            part_titles = ["完整录播", "高光时刻"]
+            db_task_danmaku['extra_info'] = json.dumps({
+                "part_videos": part_videos,
+                "part_titles": part_titles
+            }, ensure_ascii=False)
+
         danmaku_db_id = self.db_manager.insert_task(db_task_danmaku) # 先入库，获取ID
 
         danmaku_upload_task = UploadTask(
@@ -337,11 +352,10 @@ class RecordUploadManager:
             db_id=danmaku_db_id # 传入ID
         )
 
-        # 如果有高光视频，设置为分 P 上传模式
-        if highlight_video_path and os.path.exists(highlight_video_path):
+        if part_videos:
             danmaku_upload_task.set_multi_part(
-                part_videos=[session.output_path()['danmaku_video'], highlight_video_path],
-                part_titles=["完整录播", "高光时刻"]
+                part_videos=part_videos,
+                part_titles=part_titles
             )
             print(f"Set multi-part upload with highlight video")
 
@@ -427,6 +441,19 @@ class RecordUploadManager:
                             account=uploader,
                             db_id=task['id']
                         )
+
+                        # 从 extra_info 恢复分 P 状态
+                        if task.get('extra_info'):
+                            try:
+                                extra_info = json.loads(task['extra_info'])
+                                if 'part_videos' in extra_info:
+                                    upload_task.set_multi_part(
+                                        part_videos=extra_info['part_videos'],
+                                        part_titles=extra_info.get('part_titles')
+                                    )
+                            except Exception as e:
+                                print(f"解析 extra_info 失败: {e}")
+
                         # 重置状态并放入上传队列
                         self.db_manager.update_status(task['id'], 0,'')
                         self.video_upload_queue.put(upload_task)
