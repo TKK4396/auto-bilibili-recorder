@@ -151,6 +151,24 @@ class HighlightGenerator:
         
         print(f"Transcribing audio: {audio_path}")
         
+        # GPU/CUDA 诊断信息
+        print("[GPU诊断] 开始检测环境...")
+        try:
+            import torch
+            print(f"[GPU诊断] torch.cuda.is_available(): {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                print(f"[GPU诊断] GPU name: {torch.cuda.get_device_name(0)}")
+                print(f"[GPU诊断] GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        except ImportError:
+            print("[GPU诊断] torch not installed")
+        try:
+            import faster_whisper
+            print(f"[GPU诊断] faster-whisper version: {faster_whisper.__version__}")
+        except Exception:
+            print("[GPU诊断] faster-whisper version: unknown")
+        print(f"[GPU诊断] use_gpu setting: {self.use_gpu}")
+        print(f"[GPU诊断] whisper_model_size: {self.whisper_model_size}")
+        
         try:
             segments, info = self.whisper_model.transcribe(
                 audio_path,
@@ -169,6 +187,17 @@ class HighlightGenerator:
                 })
             
             print(f"Transcription complete: {len(results)} segments, {info.duration:.2f}s")
+            
+            # 保存转写结果到JSON文件
+            result_path = audio_path.replace(".mp3", ".transcription.json")
+            with open(result_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "audio_path": audio_path,
+                    "video_duration": info.duration,
+                    "segments": results
+                }, f, ensure_ascii=False, indent=2)
+            print(f"Transcription saved to: {result_path}")
+            
             return results
             
         except Exception as e:
@@ -240,7 +269,7 @@ class HighlightGenerator:
 - 片段之间至少间隔 {self.min_segment_gap} 秒
 - 优先选择有高弹幕互动的时间段
 - 只返回 JSON，不要有其他文字"""
-
+        
         print("Analyzing content with DeepSeek...")
         
         try:
@@ -307,7 +336,8 @@ class HighlightGenerator:
         self, 
         ai_highlights: List[HighlightSegment], 
         danmaku_data: List[dict],
-        video_duration: float
+        video_duration: float,
+        log_prefix: str = "[Highlight]"
     ) -> List[HighlightSegment]:
         """
         合并 AI 分析结果与弹幕数据
@@ -316,6 +346,7 @@ class HighlightGenerator:
             ai_highlights: AI 分析得到的高光片段
             danmaku_data: 弹幕能量数据
             video_duration: 视频总时长
+            log_prefix: 日志前缀
             
         Returns:
             合并后的高光片段列表（至少返回一段）
@@ -344,7 +375,7 @@ class HighlightGenerator:
         
         # 如果 AI 没有返回结果，或者需要补充高光片段
         if not highlights and danmaku_data:
-            print("No AI highlights, using danmaku data only")
+            print(f"{log_prefix} [INFO] No AI highlights, using danmaku data only")
             # 根据弹幕能量排序，找出能量最高的片段
             sorted_danmaku = sorted(danmaku_data, key=lambda x: x.get('energy', 0), reverse=True)
             
@@ -361,13 +392,13 @@ class HighlightGenerator:
         # ========== 确保至少有一段高光 ==========
         # 如果以上都没有找到高光，则选择弹幕最多的10分钟作为默认高光
         if not highlights:
-            print("No highlights found from AI or danmaku, finding highest danmaku density segment")
-            default_highlight = self._find_highest_danmaku_density(danmaku_data, video_duration)
+            print(f"{log_prefix} [WARN] No highlights found from AI or danmaku, finding highest danmaku density segment")
+            default_highlight = self._find_highest_danmaku_density(danmaku_data, video_duration, log_prefix)
             if default_highlight:
                 highlights.append(default_highlight)
             else:
                 # 如果没有弹幕数据，则选择视频中段
-                print("No danmaku data available, using middle of video as fallback")
+                print(f"{log_prefix} [WARN] No danmaku data available, using middle of video as fallback")
                 mid_point = video_duration / 2
                 default_start = max(0, mid_point - 300)  # 5分钟
                 default_end = min(video_duration, mid_point + 300)
@@ -381,14 +412,14 @@ class HighlightGenerator:
         # ======================================
         
         # 合并接近的片段（考虑流畅性，把中间内容也包含进去）
-        merged_highlights = self._merge_nearby_segments(highlights)
+        merged_highlights = self._merge_nearby_segments(highlights, log_prefix)
         
         # ========== 限制总时长不超过30分钟 ==========
         MAX_TOTAL_DURATION = 30 * 60  # 30分钟 = 1800秒
         total_duration = sum(h.end_time - h.start_time for h in merged_highlights)
         
         if total_duration > MAX_TOTAL_DURATION:
-            print(f"Total highlight duration ({total_duration:.1f}s) exceeds 30 minutes, trimming...")
+            print(f"{log_prefix} [INFO] Total highlight duration ({total_duration:.1f}s) exceeds 30 minutes, trimming...")
             # 按分数排序，优先保留高分片段
             sorted_highlights = sorted(merged_highlights, key=lambda x: x.score, reverse=True)
             
@@ -419,7 +450,7 @@ class HighlightGenerator:
             
             # 按时间排序返回
             merged_highlights = sorted(trimmed_highlights, key=lambda x: x.start_time)
-            print(f"Trimmed to {len(merged_highlights)} segments, total duration: {current_duration:.1f}s")
+            print(f"{log_prefix} [INFO] Trimmed to {len(merged_highlights)} segments, total duration: {current_duration:.1f}s")
         # ==========================================
         
         return merged_highlights
@@ -428,6 +459,7 @@ class HighlightGenerator:
         self, 
         danmaku_data: List[dict], 
         video_duration: float,
+        log_prefix: str = "[Highlight]",
         window_size: int = 600  # 10分钟 = 600秒
     ) -> Optional[HighlightSegment]:
         """
@@ -436,6 +468,7 @@ class HighlightGenerator:
         Args:
             danmaku_data: 弹幕能量数据
             video_duration: 视频总时长
+            log_prefix: 日志前缀
             window_size: 滑动窗口大小（秒），默认10分钟
             
         Returns:
@@ -472,7 +505,7 @@ class HighlightGenerator:
         # 确保不超过视频时长
         best_end = min(best_start + window_size, video_duration)
         
-        print(f"Found highest danmaku density segment: {best_start:.1f}s - {best_end:.1f}s (score: {best_score:.2f})")
+        print(f"{log_prefix} [INFO] Found highest danmaku density segment: {best_start:.1f}s - {best_end:.1f}s (score: {best_score:.2f})")
         
         return HighlightSegment(
             start_time=best_start,
@@ -485,6 +518,7 @@ class HighlightGenerator:
     def _merge_nearby_segments(
         self, 
         segments: List[HighlightSegment],
+        log_prefix: str = "[Highlight]",
         max_gap: int = 180  # 最大间隔3分钟 = 180秒
     ) -> List[HighlightSegment]:
         """
@@ -495,6 +529,7 @@ class HighlightGenerator:
         
         Args:
             segments: 高光片段列表
+            log_prefix: 日志前缀
             max_gap: 最大间隔（秒），小于此间隔的片段会被合并
             
         Returns:
@@ -528,7 +563,7 @@ class HighlightGenerator:
                     reason=f"{last.reason}; {current.reason}",
                     text_snippet=f"{last.text_snippet} {current.text_snippet}".strip()
                 )
-                print(f"Merged nearby segments with gap {gap:.1f}s: {last.start_time:.1f}s - {current.end_time:.1f}s")
+                print(f"{log_prefix} [INFO] Merged nearby segments with gap {gap:.1f}s: {last.start_time:.1f}s - {current.end_time:.1f}s")
             else:
                 merged.append(current)
         
@@ -760,7 +795,7 @@ class HighlightGenerator:
 1. 语言生动有趣
 2. 突出每个高光点的精彩之处
 3. 保持简洁，适合作为视频评论"""
-
+                
                 response = requests.post(
                     "https://api.deepseek.com/v1/chat/completions",
                     headers={
@@ -810,12 +845,14 @@ class HighlightGenerator:
         Returns:
             HighlightResult 包含视频路径、总结和高光片段，失败返回 None
         """
+        PREFIX = "[Highlight]"
+        
         if not self.enabled:
-            print("Highlight generation is disabled")
+            print(f"{PREFIX} [WARN] Highlight generation is disabled")
             return None
         
         if not os.path.exists(video_path):
-            print(f"Video not found: {video_path}")
+            print(f"{PREFIX} [WARN] Video not found: {video_path}")
             return None
         
         # 设置默认输出路径
@@ -826,22 +863,45 @@ class HighlightGenerator:
         if log_path is None:
             log_path = video_path.replace(".bar.mp4", ".highlight.log")
         
-        print(f"Starting highlight generation for: {video_path}")
+        print(f"{PREFIX} Starting highlight generation for: {video_path}")
+        
+        # 检查弹幕数据是否存在
+        has_danmaku = danmaku_data and len(danmaku_data) > 0
+        if not has_danmaku:
+            print(f"{PREFIX} [WARN] No danmaku data available, cannot generate highlights")
+            return None
         
         try:
-            # 1. 提取音频
+            # 1. 提取音频（失败不影响后续流程，使用弹幕数据兜底）
             audio_path = video_path.replace(".bar.mp4", ".audio.mp3")
-            if not await self.extract_audio(video_path, audio_path, log_path):
-                print("Failed to extract audio")
-                return None
+            audio_extraction_success = False
+            if await self.extract_audio(video_path, audio_path, log_path):
+                audio_extraction_success = True
+            else:
+                print(f"{PREFIX} [WARN] Failed to extract audio, will rely on danmaku data only")
             
-            # 2. 语音转文字
-            transcription = self.speech_to_text(audio_path)
+            # 2. 语音转文字（失败不影响后续流程，使用弹幕数据兜底）
+            transcription = []
+            if audio_extraction_success:
+                try:
+                    transcription = self.speech_to_text(audio_path)
+                    if not transcription:
+                        print(f"{PREFIX} [WARN] Speech-to-text returned empty, relying on danmaku data")
+                except Exception as e:
+                    print(f"{PREFIX} [WARN] Speech-to-text failed: {e}, relying on danmaku data")
+                    transcription = []
             
-            # 3. AI 分析
+            # 3. AI 分析（失败不影响后续流程，使用弹幕数据兜底）
             ai_highlights = []
             if transcription:
-                ai_highlights = self.analyze_with_deepseek(transcription, danmaku_data)
+                try:
+                    ai_highlights = self.analyze_with_deepseek(transcription, danmaku_data)
+                    if not ai_highlights:
+                        print(f"{PREFIX} [WARN] No AI highlights detected, relying on danmaku data")
+                except Exception as e:
+                    print(f"{PREFIX} [WARN] AI analysis failed: {e}, relying on danmaku data")
+            else:
+                print(f"{PREFIX} [WARN] No transcription available, relying on danmaku data")
             
             # 4. 获取视频时长
             stdout, stderr, returncode = await async_run_command(
@@ -850,22 +910,22 @@ class HighlightGenerator:
             video_duration = float(stdout.decode('utf-8').strip()) if returncode == 0 else 3600
             
             # 5. 合并 AI 结果与弹幕数据
-            highlights = self.merge_with_danmaku(ai_highlights, danmaku_data, video_duration)
+            highlights = self.merge_with_danmaku(ai_highlights, danmaku_data, video_duration, PREFIX)
             
             if not highlights:
-                print("No highlights found")
+                print(f"{PREFIX} [WARN] No highlights found after merging data")
                 return None
             
-            print(f"Found {len(highlights)} highlights:")
+            print(f"{PREFIX} Found {len(highlights)} highlights:")
             for h in highlights:
-                print(f"  {h.start_time:.1f}s - {h.end_time:.1f}s: {h.reason}")
+                print(f"{PREFIX}   - {h.start_time:.1f}s - {h.end_time:.1f}s: {h.reason}")
             
             # 6. 截取高光片段
             output_dir = os.path.dirname(video_path)
             segment_paths = await self.cut_highlight_segments(video_path, highlights, output_dir, log_path)
             
             if not segment_paths:
-                print("No segments cut")
+                print(f"{PREFIX} [WARN] No segments cut successfully")
                 return None
             
             # 7. 合并视频片段（带转场效果）
@@ -874,27 +934,26 @@ class HighlightGenerator:
             # 8. 生成高光文字总结
             summary = self.generate_highlight_summary(transcription, highlights)
             
-            # 9. 清理临时文件
+            # 9. 清理临时文件（只清理高光片段，保留音频和转写结果）
             for path in segment_paths:
                 if os.path.exists(path):
                     os.remove(path)
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+            # 音频和转写结果保留在同目录供后续分析使用
             
             if success:
-                print(f"Highlight video generated: {output_path}")
-                print(f"Highlight summary: {summary}")
+                print(f"{PREFIX} Highlight video generated: {output_path}")
+                print(f"{PREFIX} Highlight summary: {summary}")
                 return HighlightResult(
                     video_path=output_path,
                     summary=summary,
                     highlights=highlights
                 )
             else:
-                print("Failed to generate highlight video")
+                print(f"{PREFIX} [WARN] Failed to generate highlight video")
                 return None
                 
         except Exception as e:
-            print(f"Highlight generation error: {e}")
+            print(f"{PREFIX} [ERROR] Highlight generation error: {e}")
             traceback.print_exc()
             return None
 

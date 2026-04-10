@@ -1,3 +1,7 @@
+# 初始化日志系统（必须在其他模块导入之前）
+from logger import setup_logging
+setup_logging("/storage", keep_days=30)
+
 from quart import Quart, request, Response
 
 from record_upload_manager import RecordUploadManager

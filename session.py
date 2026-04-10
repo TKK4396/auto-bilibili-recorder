@@ -477,8 +477,8 @@ class Session:
         # 合并默认配置和用户配置
         default_config = {
             'enabled': True,
-            'qwen_api_key': '',
-            'qwen_model': 'qwen-turbo',
+            'deepseek_api_key': '',
+            'deepseek_model': 'deepseek-chat',
             'whisper_model': 'base',
             'use_gpu': True,
             'clip_before': 60,
