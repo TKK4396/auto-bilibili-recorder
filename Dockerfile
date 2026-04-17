@@ -64,9 +64,11 @@ RUN . venv/bin/activate && \
 
 RUN wget https://raw.githubusercontent.com/valkjsaaa/Bilibili-Toolkit/7b86a61214149cc3f790d02d5d06ecd7540b9bdb/bilibili.py
 COPY *.py ./
+COPY templates/ ./templates/
+COPY start.sh /
 
 WORKDIR "/storage"
 ENV PYTHONUNBUFFERED=1
 
 # Activate the virtual environment before running the command
-CMD . /webhook/venv/bin/activate && /usr/local/bin/docker-entrypoint.sh python3 -u /webhook/process_video.py
+CMD . /webhook/venv/bin/activate && /usr/local/bin/docker-entrypoint.sh bash /start.sh

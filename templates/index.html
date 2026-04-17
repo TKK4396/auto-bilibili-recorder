@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>上传任务管理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .toolbar {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .refresh-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover {
+            background: #45a049;
+        }
+        .status-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-0 { background: #e3f2fd; color: #1976d2; }
+        .status-1 { background: #fff3e0; color: #f57c00; }
+        .status-2 { background: #e8f5e9; color: #388e3c; }
+        .status-3 { background: #ffebee; color: #d32f2f; }
+        .status-4 { background: #f3e5f5; color: #7b1fa2; }
+        table {
+            width: 100%;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .action-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 5px;
+        }
+        .btn-edit {
+            background: #2196F3;
+            color: white;
+        }
+        .btn-edit:hover {
+            background: #1976D2;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            width: 400px;
+            max-width: 90%;
+        }
+        .modal h2 {
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-size: 14px;
+        }
+        .form-group select, .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .form-group textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        .modal-btns {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-btns button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-cancel {
+            background: #e0e0e0;
+            color: #333;
+        }
+        .btn-submit {
+            background: #4CAF50;
+            color: white;
+        }
+        .btn-submit:hover {
+            background: #45a049;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>上传任务管理</h1>
+        <div class="toolbar">
+            <span>非成功状态任务</span>
+            <button class="refresh-btn" onclick="loadTasks()">刷新</button>
+        </div>
+        <div id="content">
+            <div class="loading">加载中...</div>
+        </div>
+    </div>
+
+    <div class="modal" id="statusModal">
+        <div class="modal-content">
+            <h2>修改任务状态</h2>
+            <div class="form-group">
+                <label>任务ID</label>
+                <input type="text" id="modalTaskId" readonly>
+            </div>
+            <div class="form-group">
+                <label>任务标题</label>
+                <input type="text" id="modalTaskTitle" readonly>
+            </div>
+            <div class="form-group">
+                <label>当前状态</label>
+                <input type="text" id="modalCurrentStatus" readonly>
+            </div>
+            <div class="form-group">
+                <label>新状态</label>
+                <select id="modalNewStatus">
+                    <option value="0">队列中</option>
+                    <option value="1">上传中</option>
+                    <option value="2">成功</option>
+                    <option value="3">失败</option>
+                    <option value="4">等待重试</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>错误信息（可选）</label>
+                <textarea id="modalErrorMsg" placeholder="填写错误信息..."></textarea>
+            </div>
+            <div class="modal-btns">
+                <button class="btn-cancel" onclick="closeModal()">取消</button>
+                <button class="btn-submit" onclick="submitStatus()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const statusMap = {{ status_map | tojson }};
+
+        async function loadTasks() {
+            const content = document.getElementById('content');
+            content.innerHTML = '<div class="loading">加载中...</div>';
+            try {
+                const resp = await fetch('/api/tasks');
+                const tasks = await resp.json();
+                if (tasks.length === 0) {
+                    content.innerHTML = '<div class="empty">暂无非成功状态的任务</div>';
+                    return;
+                }
+                let html = `<table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>标题</th>
+                            <th>直播间ID</th>
+                            <th>状态</th>
+                            <th>账号</th>
+                            <th>错误信息</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+                for (const t of tasks) {
+                    const createTime = new Date(t.create_time).toLocaleString('zh-CN');
+                    html += `<tr>
+                        <td>${t.id}</td>
+                        <td>${escapeHtml(t.title || '')}</td>
+                        <td>${t.room_id}</td>
+                        <td><span class="status-tag status-${t.status}">${t.status_name}</span></td>
+                        <td>${escapeHtml(t.account_name || '')}</td>
+                        <td>${escapeHtml(t.error_msg || '')}</td>
+                        <td>${createTime}</td>
+                        <td><button class="action-btn btn-edit" onclick="openModal(${t.id}, '${escapeHtml(t.title || '')}', ${t.status})">修改状态</button></td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                content.innerHTML = html;
+            } catch (e) {
+                content.innerHTML = '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;')
+                     .replace(/</g, '&lt;')
+                     .replace(/>/g, '&gt;')
+                     .replace(/"/g, '&quot;')
+                     .replace(/'/g, '&#39;');
+        }
+
+        function openModal(taskId, title, currentStatus) {
+            document.getElementById('modalTaskId').value = taskId;
+            document.getElementById('modalTaskTitle').value = title;
+            document.getElementById('modalCurrentStatus').value = statusMap[currentStatus] || currentStatus;
+            document.getElementById('modalNewStatus').value = currentStatus;
+            document.getElementById('modalErrorMsg').value = '';
+            document.getElementById('statusModal').classList.add('show');
+        }
+
+        function closeModal() {
+            document.getElementById('statusModal').classList.remove('show');
+        }
+
+        async function submitStatus() {
+            const taskId = document.getElementById('modalTaskId').value;
+            const newStatus = document.getElementById('modalNewStatus').value;
+            const errorMsg = document.getElementById('modalErrorMsg').value;
+
+            try {
+                const resp = await fetch(`/api/tasks/${taskId}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: parseInt(newStatus), error_msg: errorMsg })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    closeModal();
+                    loadTasks();
+                } else {
+                    alert('更新失败: ' + (result.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('更新失败: ' + e.message);
+            }
+        }
+
+        loadTasks();
+    </script>
+</body>
+</html>

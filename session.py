@@ -348,26 +348,22 @@ class Session:
         # 确保码率在合理范围内
         video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, recommended_bitrate)))
 
-        # === 音频码率和安全边际 ===
-        audio_bitrate_kbps = 320
-        safety_margin_kbps = 500
-
-        print(f"视频信息: {video_res_x}x{video_res_y}@{video_fps}fps")
-        print(f"推荐码率: {recommended_bitrate}Kbps (调整后: {video_bitrate}Kbps)")
-        print(f"帧率调整系数: {fps_adjustment:.2f}")
-
-        video_res_x, video_res_y = self.get_resolution()
-
         # ======== 核心优化：GPU 硬件检测与硬件加速策略 ========
         # 检测系统中是否存在独立显卡 (GPU)
-        has_gpu = GPUInfo.check_empty() is not None
+        # gpuinfo.check_empty() 返回 True = 无GPU, False = 有GPU
+        gpu_check = GPUInfo.check_empty()
+        has_gpu = not gpu_check
+        print(f"GPU检测: check_empty()={gpu_check}, has_gpu={has_gpu}")
+
+        if has_gpu:
+            print("检测到独立显卡 (GPU)，将使用硬件加速。")
+        else:
+            print("未检测到独立显卡 (GPU)，将使用CPU进行处理。")
 
         # 1. 硬件解码 (Hardware Decoding)
-        # 如果有 GPU，开启 -hwaccel auto 让显卡去承担原生 .flv 视频流的解码工作，从而大幅降低 CPU 负担
         hwaccel_decode = "-hwaccel auto " if has_gpu else ""
 
         # 2. 硬件编码 (Hardware Encoding)
-        # 如果有 GPU，调用 h264_nvenc 让显卡进行最后的画面压制输出。否则使用 libx264 使用 CPU 软编。
         encoder_params = " -c:v h264_nvenc -preset slow -threads 0 " if has_gpu else " -c:v libx264 -preset medium -threads 0 "
         # ========================================================
 

@@ -37,3 +37,24 @@ class DBManager:
             with conn.cursor() as cursor:
                 cursor.execute(sql, (status,))
                 return cursor.fetchall()
+
+    def get_all_tasks(self, limit=100):
+        sql = "SELECT * FROM upload_task_record ORDER BY create_time DESC LIMIT %s"
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (limit,))
+                return cursor.fetchall()
+
+    def get_task_by_id(self, task_id):
+        sql = "SELECT * FROM upload_task_record WHERE id = %s"
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (task_id,))
+                return cursor.fetchone()
+
+    def get_non_success_tasks(self, limit=100):
+        sql = "SELECT * FROM upload_task_record WHERE status != 2 ORDER BY create_time DESC LIMIT %s"
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (limit,))
+                return cursor.fetchall()

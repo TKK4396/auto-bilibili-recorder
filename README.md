@@ -86,6 +86,8 @@ ${录制目标文件夹}
 3. 立即停止录播（会中断正在录制/转码/上传的录播）：
 
    `sudo docker rm -f auto-bilibili-recorder`
+4. 
+   访问 http://IP:3660 查看非成功状态的上传任务
 
 
 *使用请注明脚本来自 [@熊卡录播 bot](https://space.bilibili.com/1576916333)*
