@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -8,11 +9,46 @@ from asyncio import Task
 from typing import Optional
 
 import dateutil.parser
-from gpuinfo import GPUInfo
 
 from commons import BINARY_PATH
 from recorder_config import RecoderRoom
 from highlight_generator import HighlightGenerator, generate_highlight_video, HighlightResult
+
+
+def check_nvidia_gpu():
+    """检测 NVIDIA 显卡，使用 nvidia-smi 作为主要检测方式
+
+    Returns:
+        tuple: (has_gpu: bool, gpu_name: str or None)
+    """
+    # 方法1: 直接调用 nvidia-smi（最可靠）
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            gpu_name = result.stdout.strip().split('\n')[0]
+            return True, gpu_name
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # 方法2: 检查 ffmpeg 是否支持 nvenc 硬件编码
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-hide_banner', '-codecs'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if 'h264_nvenc' in result.stdout or 'hevc_nvenc' in result.stdout:
+            return True, "GPU (ffmpeg nvenc)"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return False, None
 
 
 async def async_wait_output(command):
@@ -349,11 +385,9 @@ class Session:
         video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, recommended_bitrate)))
 
         # ======== 核心优化：GPU 硬件检测与硬件加速策略 ========
-        # 检测系统中是否存在独立显卡 (GPU)
-        # gpuinfo.check_empty() 返回 True = 无GPU, False = 有GPU
-        gpu_check = GPUInfo.check_empty()
-        has_gpu = not gpu_check
-        print(f"GPU检测: check_empty()={gpu_check}, has_gpu={has_gpu}")
+        # 检测系统中是否存在独立显卡 (GPU)，使用 nvidia-smi 作为主要检测方式
+        has_gpu, gpu_name = check_nvidia_gpu()
+        print(f"GPU检测: has_gpu={has_gpu}, 显卡={gpu_name}")
 
         if has_gpu:
             print("检测到独立显卡 (GPU)，将使用硬件加速。")
