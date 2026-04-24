@@ -3,220 +3,612 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>上传任务管理</title>
+    <title>Bilibili 上传管理</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+        :root {
+            --p-red: #FF3333;
+            --p-red-dark: #CC0000;
+            --p-yellow: #FFFF00;
+            --p-blue: #00CCFF;
+            --p-pink: #FF66CC;
+            --p-black: #0A0A0A;
+            --p-dark: #1A1A1A;
+            --p-gray: #2A2A2A;
+            --p-light-gray: #888888;
+        }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 20px;
-        }
-        .toolbar {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .refresh-btn {
-            background: #4CAF50;
+            font-family: 'Arial Black', 'Heiti SC', -apple-system, sans-serif;
+            background: var(--p-black);
             color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
-        .refresh-btn:hover {
-            background: #45a049;
+
+        /* 斜切角效果 */
+        .skew-box {
+            position: relative;
         }
-        .status-tag {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .status-0 { background: #e3f2fd; color: #1976d2; }
-        .status-1 { background: #fff3e0; color: #f57c00; }
-        .status-2 { background: #e8f5e9; color: #388e3c; }
-        .status-3 { background: #ffebee; color: #d32f2f; }
-        .status-4 { background: #f3e5f5; color: #7b1fa2; }
-        table {
-            width: 100%;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            border-collapse: collapse;
-        }
-        th, td {
-            padding: 12px 15px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-        th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #333;
-        }
-        tr:hover {
-            background: #f8f9fa;
-        }
-        .action-btn {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            margin-right: 5px;
-        }
-        .btn-edit {
-            background: #2196F3;
-            color: white;
-        }
-        .btn-edit:hover {
-            background: #1976D2;
-        }
-        .modal {
-            display: none;
-            position: fixed;
+        .skew-box::before {
+            content: '';
+            position: absolute;
             top: 0;
-            left: 0;
-            width: 100%;
+            right: -15px;
+            width: 30px;
             height: 100%;
-            background: rgba(0,0,0,0.5);
-            z-index: 1000;
+            background: var(--p-red);
+            transform: skewX(-10deg);
+            z-index: -1;
         }
-        .modal.show {
+
+        /* 头部 */
+        .header {
+            background: var(--p-dark);
+            border-bottom: 4px solid var(--p-red);
+            padding: 20px 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .logo {
+            width: 50px;
+            height: 50px;
+            background: var(--p-red);
             display: flex;
             align-items: center;
             justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            clip-path: polygon(0 0, 100% 0, 100% 70%, 90% 100%, 0 100%);
         }
-        .modal-content {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            width: 400px;
-            max-width: 90%;
+        .header h1 {
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            text-shadow: 2px 2px 0 var(--p-red);
         }
-        .modal h2 {
-            margin-bottom: 20px;
-            font-size: 18px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            color: #666;
+        .header-time {
             font-size: 14px;
+            color: var(--p-light-gray);
+            font-family: 'Courier New', monospace;
         }
-        .form-group select, .form-group input, .form-group textarea {
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
+
+        /* 主容器 */
+        .main-container {
+            padding: 30px;
+            max-width: 1500px;
+            margin: 0 auto;
         }
-        .form-group textarea {
-            height: 80px;
-            resize: vertical;
-        }
-        .modal-btns {
+
+        /* 导航标签 */
+        .nav-tabs {
             display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-            margin-top: 20px;
+            margin-bottom: 0;
         }
-        .modal-btns button {
-            padding: 8px 20px;
+        .nav-tab {
+            padding: 16px 32px;
+            background: var(--p-gray);
             border: none;
-            border-radius: 4px;
-            cursor: pointer;
+            color: var(--p-light-gray);
             font-size: 14px;
+            font-weight: bold;
+            font-family: inherit;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            clip-path: polygon(0 0, 100% 0, 100% 80%, 90% 100%, 0 100%);
+            transition: all 0.2s;
+            position: relative;
         }
-        .btn-cancel {
-            background: #e0e0e0;
-            color: #333;
-        }
-        .btn-submit {
-            background: #4CAF50;
+        .nav-tab:hover {
+            background: #333;
             color: white;
         }
-        .btn-submit:hover {
-            background: #45a049;
+        .nav-tab.active {
+            background: var(--p-red);
+            color: white;
         }
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
+        .nav-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--p-yellow);
         }
-        .empty {
+
+        /* 内容面板 */
+        .tab-panel {
+            display: none;
+        }
+        .tab-panel.active {
+            display: block;
+        }
+
+        /* 卡片 */
+        .card {
+            background: var(--p-dark);
+            border: 2px solid var(--p-gray);
+            margin-top: 0;
+            position: relative;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            height: 4px;
+            background: linear-gradient(90deg, var(--p-red), var(--p-yellow));
+        }
+        .card-header {
+            padding: 16px 24px;
+            border-bottom: 2px solid var(--p-gray);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--p-black);
+        }
+        .card-title {
+            font-size: 14px;
+            font-weight: 900;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card-title::before {
+            content: '▶';
+            color: var(--p-red);
+        }
+        .card-body {
+            padding: 24px;
+        }
+
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 12px 20px;
+            border: none;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: inherit;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            clip-path: polygon(0 0, 100% 0, 100% 80%, 95% 100%, 0 100%);
+            transition: all 0.15s;
+        }
+        .btn-primary {
+            background: var(--p-red);
+            color: white;
+        }
+        .btn-primary:hover {
+            background: var(--p-yellow);
+            color: var(--p-black);
+            transform: translateX(5px);
+        }
+        .btn-success {
+            background: var(--p-blue);
+            color: var(--p-black);
+        }
+        .btn-success:hover {
+            background: var(--p-yellow);
+        }
+        .btn-ghost {
+            background: var(--p-gray);
+            color: white;
+        }
+        .btn-ghost:hover {
+            background: #444;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--p-dark);
+            border: 2px solid var(--p-gray);
+            padding: 20px;
+            position: relative;
+            clip-path: polygon(0 0, 100% 0, 100% 85%, 95% 100%, 0 100%);
+        }
+        .stat-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 0 30px 30px 0;
+            border-color: transparent var(--p-red) transparent transparent;
+        }
+        .stat-card .stat-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .stat-card .stat-value {
+            font-size: 36px;
+            font-weight: 900;
+            color: var(--p-yellow);
+            text-shadow: 2px 2px 0 var(--p-red);
+        }
+        .stat-card .stat-label {
+            font-size: 11px;
+            color: var(--p-light-gray);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* 表格 */
+        .table-container {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            text-align: left;
+            padding: 14px 16px;
+            font-size: 11px;
+            font-weight: 900;
+            color: var(--p-yellow);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            background: var(--p-black);
+            border-bottom: 2px solid var(--p-red);
+        }
+        td {
+            padding: 14px 16px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--p-gray);
+        }
+        tr:hover td {
+            background: rgba(255, 51, 51, 0.1);
+        }
+
+        /* 状态标签 */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            clip-path: polygon(0 0, 100% 0, 100% 70%, 90% 100%, 0 100%);
+        }
+        .status-0 { background: var(--p-blue); color: var(--p-black); }
+        .status-1 { background: var(--p-yellow); color: var(--p-black); }
+        .status-2 { background: #00CC66; color: var(--p-black); }
+        .status-3 { background: var(--p-red); color: white; }
+        .status-4 { background: var(--p-pink); color: var(--p-black); }
+
+        /* 操作按钮 */
+        .btn-action {
+            padding: 6px 12px;
+            font-size: 10px;
+            border: none;
+            font-weight: bold;
+            font-family: inherit;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            clip-path: polygon(0 0, 100% 0, 100% 70%, 90% 100%, 0 100%);
+            transition: all 0.15s;
+        }
+        .btn-edit {
+            background: var(--p-red);
+            color: white;
+        }
+        .btn-edit:hover {
+            background: var(--p-yellow);
+            color: var(--p-black);
+        }
+
+        /* 空/加载状态 */
+        .empty-state, .loading-state {
             text-align: center;
-            padding: 40px;
-            color: #999;
+            padding: 60px 20px;
+        }
+        .empty-state .empty-icon, .loading-state .spinner {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .empty-state .empty-text, .loading-state .loading-text {
+            font-size: 14px;
+            color: var(--p-light-gray);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--p-gray);
+            border-top-color: var(--p-red);
+            border-right-color: var(--p-yellow);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 模态框 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.show {
+            display: flex;
+        }
+        .modal {
+            background: var(--p-dark);
+            width: 480px;
+            max-width: 90%;
+            border: 3px solid var(--p-red);
+            position: relative;
+            animation: modalIn 0.3s ease-out;
+        }
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9) translateY(-20px);
+            }
+        }
+        .modal::before {
+            content: '';
+            position: absolute;
+            top: -3px;
+            left: 20px;
+            right: 20px;
+            height: 6px;
+            background: var(--p-yellow);
+        }
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 2px solid var(--p-gray);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--p-black);
+        }
+        .modal-title {
+            font-size: 14px;
+            font-weight: 900;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--p-yellow);
+        }
+        .modal-close {
+            width: 32px;
+            height: 32px;
+            border: 2px solid var(--p-gray);
+            background: transparent;
+            color: var(--p-light-gray);
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .modal-close:hover {
+            border-color: var(--p-red);
+            color: var(--p-red);
+        }
+        .modal-body {
+            padding: 24px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        .form-label {
+            display: block;
+            font-size: 11px;
+            font-weight: bold;
+            color: var(--p-yellow);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--p-gray);
+            background: var(--p-black);
+            color: white;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--p-red);
+        }
+        .form-input[readonly] {
+            color: var(--p-light-gray);
+        }
+        .form-textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 2px solid var(--p-gray);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            background: var(--p-black);
+        }
+
+        /* 配置编辑器 */
+        .config-editor {
+            width: 100%;
+            min-height: 400px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            padding: 16px;
+            border: 2px solid var(--p-gray);
+            background: var(--p-black);
+            color: var(--p-yellow);
+            resize: vertical;
+        }
+        .config-editor:focus {
+            outline: none;
+            border-color: var(--p-red);
+        }
+        .config-actions {
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .save-hint {
+            color: var(--p-red);
+            font-size: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            animation: blink 1.5s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>上传任务管理</h1>
-        <div class="toolbar">
-            <span>非成功状态任务</span>
-            <button class="refresh-btn" onclick="loadTasks()">刷新</button>
+    <!-- 头部 -->
+    <div class="header">
+        <div class="header-left">
+            <div class="logo">B</div>
+            <h1>Bilibili 上传管理</h1>
         </div>
-        <div id="content">
-            <div class="loading">加载中...</div>
+        <div class="header-time" id="currentTime"></div>
+    </div>
+
+    <!-- 主容器 -->
+    <div class="main-container">
+        <!-- 导航 -->
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('tasks')">
+                ▶ 任务管理
+            </button>
+            <button class="nav-tab" onclick="switchTab('config')">
+                ▶ 配置管理
+            </button>
+        </div>
+
+        <!-- 任务管理面板 -->
+        <div id="panel-tasks" class="tab-panel active">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">上传任务列表</div>
+                    <button class="btn btn-primary" onclick="loadTasks()">
+                        ↻ 刷新
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="content">
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <div class="loading-text">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置管理面板 -->
+        <div id="panel-config" class="tab-panel">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">recorder_config.yaml</div>
+                    <button class="btn btn-primary" onclick="loadConfig()">
+                        ↻ 刷新
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="config-container">
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <div class="loading-text">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <div class="modal" id="statusModal">
-        <div class="modal-content">
-            <h2>修改任务状态</h2>
-            <div class="form-group">
-                <label>任务ID</label>
-                <input type="text" id="modalTaskId" readonly>
+    <!-- 模态框 -->
+    <div class="modal-overlay" id="statusModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">▶ 修改任务状态</div>
+                <button class="modal-close" onclick="closeModal()">×</button>
             </div>
-            <div class="form-group">
-                <label>任务标题</label>
-                <input type="text" id="modalTaskTitle" readonly>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">任务ID</label>
+                    <input type="text" class="form-input" id="modalTaskId" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">任务标题</label>
+                    <input type="text" class="form-input" id="modalTaskTitle" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">当前状态</label>
+                    <input type="text" class="form-input" id="modalCurrentStatus" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">新状态</label>
+                    <select class="form-select" id="modalNewStatus">
+                        <option value="0">队列中</option>
+                        <option value="1">上传中</option>
+                        <option value="2">成功</option>
+                        <option value="3">失败</option>
+                        <option value="4">等待重试</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">错误信息</label>
+                    <textarea class="form-textarea" id="modalErrorMsg" placeholder="填写错误信息..."></textarea>
+                </div>
             </div>
-            <div class="form-group">
-                <label>当前状态</label>
-                <input type="text" id="modalCurrentStatus" readonly>
-            </div>
-            <div class="form-group">
-                <label>新状态</label>
-                <select id="modalNewStatus">
-                    <option value="0">队列中</option>
-                    <option value="1">上传中</option>
-                    <option value="2">成功</option>
-                    <option value="3">失败</option>
-                    <option value="4">等待重试</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>错误信息（可选）</label>
-                <textarea id="modalErrorMsg" placeholder="填写错误信息..."></textarea>
-            </div>
-            <div class="modal-btns">
-                <button class="btn-cancel" onclick="closeModal()">取消</button>
-                <button class="btn-submit" onclick="submitStatus()">保存</button>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+                <button class="btn btn-success" onclick="submitStatus()">▶ 保存</button>
             </div>
         </div>
     </div>
@@ -224,47 +616,122 @@
     <script>
         const statusMap = {{ status_map | tojson }};
 
+        // 更新时间
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleString('zh-CN');
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+
+        // Tab 切换
+        function switchTab(tabName) {
+            document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+
+            document.querySelector(`.nav-tab[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`panel-${tabName}`).classList.add('active');
+
+            if (tabName === 'config') {
+                loadConfig();
+            }
+        }
+
+        // 加载任务列表
         async function loadTasks() {
             const content = document.getElementById('content');
-            content.innerHTML = '<div class="loading">加载中...</div>';
+            content.innerHTML = `
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <div class="loading-text">加载中...</div>
+                </div>
+            `;
+
             try {
                 const resp = await fetch('/api/tasks');
                 const tasks = await resp.json();
+
                 if (tasks.length === 0) {
-                    content.innerHTML = '<div class="empty">暂无非成功状态的任务</div>';
+                    content.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">◇</div>
+                            <div class="empty-text">暂无非成功状态的任务</div>
+                        </div>
+                    `;
                     return;
                 }
-                let html = `<table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>标题</th>
-                            <th>直播间ID</th>
-                            <th>状态</th>
-                            <th>账号</th>
-                            <th>错误信息</th>
-                            <th>创建时间</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
+
+                // 统计
+                const stats = { 0: 0, 1: 0, 3: 0, 4: 0 };
+                tasks.forEach(t => {
+                    if (stats[t.status] !== undefined) stats[t.status]++;
+                });
+
+                let html = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">⏳</div>
+                            <div class="stat-value">${stats[0] || 0}</div>
+                            <div class="stat-label">队列中</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⬆</div>
+                            <div class="stat-value">${stats[1] || 0}</div>
+                            <div class="stat-label">上传中</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">✕</div>
+                            <div class="stat-value">${stats[3] || 0}</div>
+                            <div class="stat-label">失败</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">❚❚</div>
+                            <div class="stat-value">${stats[4] || 0}</div>
+                            <div class="stat-label">等待重试</div>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>标题</th>
+                                    <th>直播间</th>
+                                    <th>状态</th>
+                                    <th>账号</th>
+                                    <th>错误信息</th>
+                                    <th>创建时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
                 for (const t of tasks) {
                     const createTime = new Date(t.create_time).toLocaleString('zh-CN');
-                    html += `<tr>
-                        <td>${t.id}</td>
-                        <td>${escapeHtml(t.title || '')}</td>
-                        <td>${t.room_id}</td>
-                        <td><span class="status-tag status-${t.status}">${t.status_name}</span></td>
-                        <td>${escapeHtml(t.account_name || '')}</td>
-                        <td>${escapeHtml(t.error_msg || '')}</td>
-                        <td>${createTime}</td>
-                        <td><button class="action-btn btn-edit" onclick="openModal(${t.id}, '${escapeHtml(t.title || '')}', ${t.status})">修改状态</button></td>
-                    </tr>`;
+                    html += `
+                        <tr>
+                            <td><strong>#${t.id}</strong></td>
+                            <td>${escapeHtml(t.title || '-')}</td>
+                            <td>${t.room_id}</td>
+                            <td><span class="status-badge status-${t.status}">${t.status_name}</span></td>
+                            <td>${escapeHtml(t.account_name || '-')}</td>
+                            <td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(t.error_msg || '')}">${escapeHtml(t.error_msg || '-')}</td>
+                            <td>${createTime}</td>
+                            <td><button class="btn-action btn-edit" onclick="openModal(${t.id}, '${escapeHtml(t.title || '')}', ${t.status})">编辑</button></td>
+                        </tr>
+                    `;
                 }
-                html += '</tbody></table>';
+
+                html += '</tbody></table></div>';
                 content.innerHTML = html;
             } catch (e) {
-                content.innerHTML = '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">✕</div>
+                        <div class="empty-text">加载失败: ${escapeHtml(e.message)}</div>
+                    </div>
+                `;
             }
         }
 
@@ -277,6 +744,7 @@
                      .replace(/'/g, '&#39;');
         }
 
+        // 模态框
         function openModal(taskId, title, currentStatus) {
             document.getElementById('modalTaskId').value = taskId;
             document.getElementById('modalTaskTitle').value = title;
@@ -313,6 +781,84 @@
             }
         }
 
+        // 配置管理
+        async function loadConfig() {
+            const container = document.getElementById('config-container');
+            container.innerHTML = `
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <div class="loading-text">加载中...</div>
+                </div>
+            `;
+
+            try {
+                const resp = await fetch('/api/config');
+                const result = await resp.json();
+
+                if (result.success) {
+                    container.innerHTML = `
+                        <textarea id="configEditor" class="config-editor">${escapeHtml(result.content)}</textarea>
+                        <div class="config-actions">
+                            <button class="btn btn-success" id="saveBtn" onclick="saveConfig()">
+                                ▶ 保存配置
+                            </button>
+                            <div class="save-hint">
+                                ⚠ 保存后需手动重启服务
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">✕</div>
+                            <div class="empty-text">加载失败: ${escapeHtml(result.error)}</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">✕</div>
+                        <div class="empty-text">加载失败: ${escapeHtml(e.message)}</div>
+                    </div>
+                `;
+            }
+        }
+
+        async function saveConfig() {
+            const editor = document.getElementById('configEditor');
+            const btn = document.getElementById('saveBtn');
+            const content = editor.value;
+
+            btn.disabled = true;
+            btn.textContent = '▶ 保存中...';
+
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    btn.textContent = '▶ 已保存';
+                    setTimeout(() => {
+                        btn.textContent = '▶ 保存配置';
+                        btn.disabled = false;
+                    }, 2000);
+                } else {
+                    alert('保存失败: ' + (result.error || '未知错误'));
+                    btn.textContent = '▶ 保存配置';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+                btn.textContent = '▶ 保存配置';
+                btn.disabled = false;
+            }
+        }
+
+        // 初始化
         loadTasks();
     </script>
 </body>
