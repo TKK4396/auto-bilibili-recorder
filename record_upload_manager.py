@@ -127,19 +127,42 @@ class RecordUploadManager:
                     SubtitleTask.from_upload_task(upload_task, bv_id)
                 )
             except Exception as e:
-                error_msg = str(e)[:500] # 截取部分报错信息
+                error_msg = str(e)[:500]  # 截取部分报错信息
+                error_type = UploadTask._classify_error(e)
+
+                # 按错误类型输出差异化日志
+                if error_type == "credential":
+                    print(f"[重试终止-认证错误] {upload_task.title}: {error_msg}")
+                    print(f"[建议] 账号 {upload_task.account.name} 登录态异常，请更新 Cookie 后从数据库手动重试")
+                elif error_type == "upload":
+                    print(f"[上传失败] {upload_task.title}: {error_msg}")
+                else:
+                    print(f"[上传失败-未知错误] {upload_task.title}: {error_msg}")
+
                 if upload_task.trial < 5:
                     upload_task.trial += 1
                     if upload_task.db_id:
                         # 失败后还有机会，状态退回 0 (QUEUED)
-                        self.db_manager.update_status(upload_task.db_id, 0, f"Retrying... {error_msg}")
-                    self.video_upload_queue.put(upload_task)
-                    print(f"Upload failed: {upload_task.title}, retrying")
+                        self.db_manager.update_status(upload_task.db_id, 0, f"第{upload_task.trial}次重试... {error_msg}")
+                    if error_type == "credential":
+                        # 认证错误：减少重试次数（再试 2 次后放弃，给 cookie 刷新留机会但不无限等待）
+                        if upload_task.trial < 3:
+                            print(f"[退避] 等待 10s 后重试 (第{upload_task.trial}次)")
+                            time.sleep(10)
+                            self.video_upload_queue.put(upload_task)
+                        else:
+                            print(f"[放弃] 认证错误重试 {upload_task.trial} 次仍失败: {upload_task.title}")
+                            if upload_task.db_id:
+                                self.db_manager.update_status(upload_task.db_id, 3, f"认证失败: {error_msg}")
+                    else:
+                        print(f"[退避] 等待 10s 后重试 (第{upload_task.trial}次)")
+                        time.sleep(10)
+                        self.video_upload_queue.put(upload_task)
                 else:
                     if upload_task.db_id:
                         # 彻底失败，状态设为 3 (FAILED)
-                        self.db_manager.update_status(upload_task.db_id, 3, error_msg) # 最终失败
-                    print(f"Upload failed too many times: {upload_task.title}")
+                        self.db_manager.update_status(upload_task.db_id, 3, error_msg)
+                    print(f"[放弃] 重试 {upload_task.trial} 次后仍失败: {upload_task.title}")
                 print(traceback.format_exc())
 
     def comment_poster(self):
