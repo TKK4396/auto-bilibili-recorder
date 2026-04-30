@@ -6,7 +6,18 @@ from db_manager import DBManager
 
 app = Quart(__name__)
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'recorder_config.yaml')
+def _resolve_config_path():
+    env_path = os.environ.get('RECORDER_CONFIG_PATH')
+    if env_path:
+        return env_path
+
+    cwd_path = os.path.join(os.getcwd(), 'recorder_config.yaml')
+    if os.path.isfile(cwd_path):
+        return cwd_path
+
+    return os.path.join(os.path.dirname(__file__), 'recorder_config.yaml')
+
+CONFIG_PATH = _resolve_config_path()
 
 db_manager = DBManager(
     host='127.0.0.1',

@@ -155,7 +155,7 @@ class UploadTask:
     @staticmethod
     def _name_to_line(name):
         """将线路名称转换为 bilibili_api 的 Lines 枚举值"""
-        return _LINE_MAP.get(name)
+        return UploadTask._LINE_MAP.get(name)
 
     async def upload(self, session_dict: {str: str}):
 
