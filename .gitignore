@@ -109,3 +109,10 @@ fabric.properties
 
 /exes/
 /bilibili.py
+/.idea/.gitignore
+/.idea/auto-bilibili-recorder.iml
+/.idea/claudeCodeTabState.xml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/vcs.xml
