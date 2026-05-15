@@ -506,6 +506,26 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+
+        /* 进度条 */
+        .progress-bar {
+            flex: 1;
+            height: 10px;
+            background: var(--p-gray);
+            border: 1px solid #444;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--p-red), var(--p-blue));
+            transition: width 0.3s ease-out;
+        }
+        .progress-text {
+            font-size: 11px;
+            color: var(--p-light-gray);
+            letter-spacing: 1px;
+            min-width: 38px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -527,6 +547,9 @@
             </button>
             <button class="nav-tab" onclick="switchTab('config')">
                 ▶ 配置管理
+            </button>
+            <button class="nav-tab" onclick="switchTab('transcription')">
+                ▶ 语音转文字
             </button>
         </div>
 
@@ -567,6 +590,47 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 语音转文字面板 -->
+        <div id="panel-transcription" class="tab-panel">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">.all.bar.mp4 语音转文字</div>
+                    <div style="display: flex; gap: 12px;">
+                        <span id="tran-scan-dir" style="font-size: 11px; color: var(--p-light-gray); display: flex; align-items: center;"></span>
+                        <button class="btn btn-primary" onclick="loadTranscriptionFiles()">
+                            ↻ 刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="tran-status" style="margin-bottom: 16px;"></div>
+                    <div id="tran-content">
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <div class="loading-text">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 转录结果模态框 -->
+    <div class="modal-overlay" id="tranResultModal">
+        <div class="modal" style="width: 800px; max-height: 80vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <div class="modal-title" id="tranResultTitle">▶ 转录结果</div>
+                <button class="modal-close" onclick="closeTranResultModal()">x</button>
+            </div>
+            <div class="modal-body" style="flex: 1; overflow-y: auto; max-height: calc(80vh - 140px);">
+                <pre id="tranResultText" style="white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.8; color: white; background: var(--p-black); padding: 16px; border: 2px solid var(--p-gray);">加载中...</pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeTranResultModal()">关闭</button>
+                <button class="btn btn-primary" onclick="copyTranResult()">复制结果</button>
             </div>
         </div>
     </div>
@@ -634,6 +698,14 @@
 
             if (tabName === 'config') {
                 loadConfig();
+            } else if (tabName === 'transcription') {
+                loadTranscriptionFiles(true);
+            }
+
+            // 切换到非转录 Tab 时停止轮询
+            if (tabName !== 'transcription' && tranPollTimer) {
+                clearInterval(tranPollTimer);
+                tranPollTimer = null;
             }
         }
 
@@ -856,6 +928,266 @@
                 btn.textContent = '▶ 保存配置';
                 btn.disabled = false;
             }
+        }
+
+        // ========== 语音转文字 ==========
+
+        let tranPollTimer = null;
+        let _lastTranFilesJson = '';
+
+        async function loadTranscriptionFiles(forceRender = false) {
+            const container = document.getElementById('tran-content');
+            const statusDiv = document.getElementById('tran-status');
+            statusDiv.innerHTML = '';
+            container.innerHTML = `
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <div class="loading-text">扫描中...</div>
+                </div>
+            `;
+
+            try {
+                const resp = await fetch('/api/transcription/files');
+                const result = await resp.json();
+
+                if (!result.success) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">x</div>
+                            <div class="empty-text">${escapeHtml(result.error)}</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                document.getElementById('tran-scan-dir').textContent = '目录: ' + result.scan_directory;
+
+                // 数据未变化时跳过 DOM 重建（轮询场景）
+                if (!forceRender) {
+                    const filesJson = JSON.stringify(result.files);
+                    if (filesJson === _lastTranFilesJson) {
+                        return;
+                    }
+                    _lastTranFilesJson = filesJson;
+                } else {
+                    _lastTranFilesJson = '';
+                }
+
+                if (result.files.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">+</div>
+                            <div class="empty-text">未找到 .all.bar.mp4 文件</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // 检查是否有进行中的任务，有则轮询，无则停止
+                let hasActive = false;
+                for (const f of result.files) {
+                    if (f.task && (f.task.status === 'extracting' || f.task.status === 'splitting' || f.task.status === 'transcribing')) {
+                        hasActive = true;
+                        break;
+                    }
+                }
+                if (hasActive && !tranPollTimer) {
+                    tranPollTimer = setInterval(loadTranscriptionFiles, 3000);
+                } else if (!hasActive && tranPollTimer) {
+                    clearInterval(tranPollTimer);
+                    tranPollTimer = null;
+                }
+
+                // 批量操作栏
+                let html = `
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <button class="btn btn-success" onclick="batchTranscribe()">▶ 转录选中文件</button>
+                        <span style="font-size: 11px; color: var(--p-light-gray);">勾选待转换文件后点击按钮</span>
+                    </div>
+                    <div class="table-container"><table>
+                        <thead><tr>
+                            <th style="width: 50px;"><input type="checkbox" onclick="toggleAllTran(this)" title="全选/取消全选"></th>
+                            <th>文件名</th><th>大小</th><th>状态</th><th>进度</th><th>操作</th>
+                        </tr></thead><tbody>
+                `;
+
+                for (const f of result.files) {
+                    let statusHtml, progressHtml, actionHtml;
+                    const isDone = f.has_tran || (f.task && f.task.status === 'done');
+                    const isFailed = f.task && f.task.status === 'failed';
+                    const isActive = f.task && f.task.status !== 'done' && f.task.status !== 'failed';
+
+                    if (isActive) {
+                        const statusLabels = {
+                            'pending': '等待中',
+                            'extracting': '提取音频中',
+                            'splitting': '分段中',
+                            'transcribing': '转写中'
+                        };
+                        statusHtml = `<span class="status-badge status-1">${statusLabels[f.task.status] || escapeHtml(f.task.status)}</span>`;
+                        progressHtml = `
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div class="progress-bar"><div class="progress-fill" style="width: ${f.task.progress}%;"></div></div>
+                                <span class="progress-text">${f.task.progress}%</span>
+                            </div>`;
+                        actionHtml = '<span style="color: var(--p-light-gray);">进行中...</span>';
+                    } else if (isDone) {
+                        statusHtml = '<span class="status-badge status-2">已转换</span>';
+                        progressHtml = '<span style="color: var(--p-blue);">100%</span>';
+                        actionHtml = `
+                            <button class="btn-action btn-edit" onclick="viewTranResult('${encodeURIComponent(f.path)}')">查看</button>
+                            <button class="btn-action" style="background: var(--p-blue); color: var(--p-black);" onclick="downloadTran('${encodeURIComponent(f.path)}')">下载</button>`;
+                    } else if (isFailed) {
+                        statusHtml = '<span class="status-badge status-3">失败</span>';
+                        progressHtml = '<span style="color: var(--p-red);">' + escapeHtml(f.task.error_msg || '未知错误') + '</span>';
+                        actionHtml = `<button class="btn-action btn-edit" onclick="startTranscription('${encodeURIComponent(f.path)}', this)">重试</button>`;
+                    } else {
+                        statusHtml = '<span class="status-badge status-0">待转换</span>';
+                        progressHtml = '-';
+                        actionHtml = `<button class="btn-action btn-edit" onclick="startTranscription('${encodeURIComponent(f.path)}', this)">转录</button>`;
+                    }
+
+                    html += `
+                        <tr>
+                            <td><input type="checkbox" class="tran-checkbox" data-path="${escapeHtml(f.path)}"></td>
+                            <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</td>
+                            <td>${f.size_mb} MB</td>
+                            <td>${statusHtml}</td>
+                            <td style="min-width: 180px;">${progressHtml}</td>
+                            <td style="white-space: nowrap;">${actionHtml}</td>
+                        </tr>`;
+                }
+
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">x</div>
+                        <div class="empty-text">加载失败: ${escapeHtml(e.message)}</div>
+                    </div>`;
+            }
+        }
+
+        function toggleAllTran(masterCheckbox) {
+            document.querySelectorAll('.tran-checkbox').forEach(cb => {
+                cb.checked = masterCheckbox.checked;
+            });
+        }
+
+        async function batchTranscribe() {
+            const checkboxes = document.querySelectorAll('.tran-checkbox:checked');
+            if (checkboxes.length === 0) {
+                alert('请至少勾选一个文件');
+                return;
+            }
+
+            const paths = [];
+            checkboxes.forEach(cb => paths.push(cb.dataset.path));
+
+            const statusDiv = document.getElementById('tran-status');
+            statusDiv.innerHTML = `<span class="status-badge status-1">正在启动 ${paths.length} 个转录任务...</span>`;
+
+            if (!tranPollTimer) {
+                tranPollTimer = setInterval(loadTranscriptionFiles, 3000);
+            }
+
+            const results = await Promise.all(
+                paths.map(p => fetch('/api/transcription/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_path: p })
+                }).then(r => r.json()).catch(e => ({ success: false, error: e.message }))
+            ));
+            const failed = results.filter(r => !r.success);
+            if (failed.length > 0) {
+                console.error('部分启动失败:', failed);
+            }
+
+            statusDiv.innerHTML = `<span class="status-badge status-1">已启动 ${paths.length} 个任务，等待完成...</span>`;
+            setTimeout(() => loadTranscriptionFiles(true), 500);
+        }
+
+        async function startTranscription(encodedPath, btn) {
+            const videoPath = decodeURIComponent(encodedPath);
+            btn.disabled = true;
+            btn.textContent = '启动中...';
+
+            try {
+                const resp = await fetch('/api/transcription/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_path: videoPath })
+                });
+                const result = await resp.json();
+
+                if (result.success) {
+                    if (!tranPollTimer) {
+                        tranPollTimer = setInterval(loadTranscriptionFiles, 3000);
+                    }
+                    loadTranscriptionFiles(true);
+                } else {
+                    alert('启动失败: ' + (result.error || '未知错误'));
+                    btn.disabled = false;
+                    btn.textContent = '转录';
+                }
+            } catch (e) {
+                alert('启动失败: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '转录';
+            }
+        }
+
+        async function viewTranResult(encodedPath) {
+            const videoPath = decodeURIComponent(encodedPath);
+            const overlay = document.getElementById('tranResultModal');
+            const textEl = document.getElementById('tranResultText');
+            const titleEl = document.getElementById('tranResultTitle');
+
+            overlay.classList.add('show');
+            titleEl.textContent = '▶ ' + videoPath.split('/').pop();
+            textEl.textContent = '加载中...';
+
+            try {
+                const cleanPath = videoPath.startsWith('/') ? videoPath.substring(1) : videoPath;
+                const resp = await fetch('/api/transcription/result/' + encodeURIComponent(cleanPath));
+                const result = await resp.json();
+
+                if (result.success) {
+                    textEl.textContent = result.text || '(空)';
+                } else {
+                    textEl.textContent = '获取失败: ' + (result.error || '未知错误');
+                }
+            } catch (e) {
+                textEl.textContent = '获取失败: ' + e.message;
+            }
+        }
+
+        function downloadTran(encodedPath) {
+            const videoPath = decodeURIComponent(encodedPath);
+            const cleanPath = videoPath.startsWith('/') ? videoPath.substring(1) : videoPath;
+            const a = document.createElement('a');
+            a.href = '/api/transcription/download/' + encodeURIComponent(cleanPath);
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function closeTranResultModal() {
+            document.getElementById('tranResultModal').classList.remove('show');
+        }
+
+        function copyTranResult() {
+            const text = document.getElementById('tranResultText').textContent;
+            const btn = document.querySelector('#tranResultModal .btn-primary');
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = btn.textContent;
+                btn.textContent = '已复制';
+                setTimeout(() => { btn.textContent = orig; }, 1500);
+            }).catch(() => {
+                alert('复制失败');
+            });
         }
 
         // 初始化

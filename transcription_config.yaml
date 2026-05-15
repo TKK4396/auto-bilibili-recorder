@@ -1,0 +1,9 @@
+# 语音转文字独立配置
+# 此文件由 speech_to_text.py 模块独享，不侵入 recorder_config
+
+enabled: true
+siliconflow_api_key: "your_siliconflow_api_key_here"
+siliconflow_asr_model: "TeleAI/TeleSpeechASR"
+scan_directory: "/storage"
+segment_max_duration_minutes: 60
+segment_max_size_mb: 50
