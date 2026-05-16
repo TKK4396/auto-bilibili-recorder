@@ -597,7 +597,7 @@
         <div id="panel-transcription" class="tab-panel">
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">.all.bar.mp4 语音转文字</div>
+                    <div class="card-title">录制文件语音转文字</div>
                     <div style="display: flex; gap: 12px;">
                         <span id="tran-scan-dir" style="font-size: 11px; color: var(--p-light-gray); display: flex; align-items: center;"></span>
                         <button class="btn btn-primary" onclick="loadTranscriptionFiles()">
@@ -977,7 +977,7 @@
                     container.innerHTML = `
                         <div class="empty-state">
                             <div class="empty-icon">+</div>
-                            <div class="empty-text">未找到 .all.bar.mp4 文件</div>
+                            <div class="empty-text">未找到可转录的录制文件</div>
                         </div>
                     `;
                     return;

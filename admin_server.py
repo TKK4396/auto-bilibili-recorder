@@ -5,7 +5,7 @@ import os
 import asyncio
 from db_manager import DBManager
 from speech_to_text import (
-    find_all_bar_mp4_files, run_transcription, get_task,
+    find_all_transcription_files, run_transcription, get_task,
     get_task_by_path, get_all_tasks, delete_task,
     load_transcription_config, get_tran_content, _make_task_id,
     _get_output_txt_path
@@ -128,12 +128,12 @@ async def save_config():
 
 @app.route('/api/transcription/files')
 async def get_transcription_files():
-    """扫描 .all.bar.mp4 文件列表"""
+    """扫描可转录的录制文件列表"""
     cfg = load_transcription_config()
     scan_dir = cfg.get('scan_directory', '/storage')
 
     try:
-        files = await asyncio.to_thread(find_all_bar_mp4_files, scan_dir)
+        files = await asyncio.to_thread(find_all_transcription_files, scan_dir)
     except Exception as e:
         return jsonify({'success': False, 'error': f'扫描目录失败: {str(e)}'}), 500
 

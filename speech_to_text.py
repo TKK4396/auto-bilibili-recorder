@@ -1,6 +1,6 @@
 """
 语音转文字模块
-功能：从 .all.bar.mp4 视频中提取音频，分段后调用 SiliconFlow ASR API 转为文字
+功能：从 .all.bar.mp4 视频（或 .aac / .mp3 音频）中提取并转录语音
 输出：合并所有分段文字为 .all.bar.tran.txt
 """
 
@@ -122,17 +122,21 @@ def delete_task(task_id: str) -> bool:
 
 # ==================== 文件扫描 ====================
 
-def find_all_bar_mp4_files(base_dir: str) -> List[str]:
-    """扫描目录下所有 .all.bar.mp4 文件"""
-    pattern = os.path.join(base_dir, '**', '*.all.bar.mp4')
-    files = glob.glob(pattern, recursive=True)
+def find_all_transcription_files(base_dir: str) -> List[str]:
+    """扫描目录下所有可转录的录制文件（.all.bar.mp4 / .aac / .mp3）"""
+    files = []
+    for suffix in ('.all.bar.mp4', '.aac', '.mp3'):
+        pattern = os.path.join(base_dir, '**', '*' + suffix)
+        files.extend(glob.glob(pattern, recursive=True))
     files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
     return files
 
 
 def _get_output_txt_path(video_path: str) -> str:
-    base = video_path[:-len('.mp4')] if video_path.endswith('.mp4') else video_path
-    return base + '.tran.txt'
+    base, ext = os.path.splitext(video_path)
+    if ext in ('.mp4', '.aac', '.mp3'):
+        return base + '.tran.txt'
+    return video_path + '.tran.txt'
 
 
 def _get_file_size_mb(file_path: str) -> float:
@@ -338,7 +342,11 @@ async def run_transcription(video_path: str, config: dict) -> str:
         return task_id
 
     seg_dir = video_path + '.segments'
-    audio_path = video_path[:-len('.mp4')] + '.audio.mp3' if video_path.endswith('.mp4') else video_path + '.audio.mp3'
+    if video_path.endswith('.mp3'):
+        audio_path = video_path
+    else:
+        base, _ = os.path.splitext(video_path)
+        audio_path = base + '.audio.mp3'
     segment_files = []
     need_split = False
 
@@ -346,7 +354,8 @@ async def run_transcription(video_path: str, config: dict) -> str:
         task.status = 'extracting'
         task.progress = 5
 
-        if not os.path.exists(audio_path) or _get_file_size_mb(audio_path) <= 0:
+        need_extract = (audio_path != video_path)
+        if need_extract and (not os.path.exists(audio_path) or _get_file_size_mb(audio_path) <= 0):
             success = await extract_audio(video_path, audio_path)
             if not success:
                 task.status = 'failed'

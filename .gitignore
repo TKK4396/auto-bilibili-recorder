@@ -111,3 +111,5 @@ fabric.properties
 /bilibili.py
 /.idea/auto-bilibili-recorder.iml
 /.idea/claudeCodeTabState.xml
+/.proxyai/
+/.claude/settings.local.json
