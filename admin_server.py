@@ -7,8 +7,8 @@ from db_manager import DBManager
 from speech_to_text import (
     find_all_transcription_files, run_transcription, get_task,
     get_task_by_path, get_all_tasks, delete_task,
-    load_transcription_config, get_tran_content, _make_task_id,
-    _get_output_txt_path
+    load_transcription_config, get_tran_content,
+    clear_transcription_output, _make_task_id, _get_output_txt_path
 )
 
 app = Quart(__name__)
@@ -269,6 +269,32 @@ async def delete_transcription_task(task_id):
     if delete_task(task_id):
         return jsonify({'success': True, 'message': '已删除'})
     return jsonify({'success': False, 'error': '任务不存在'}), 404
+
+
+@app.route('/api/transcription/reprocess', methods=['POST'])
+async def reprocess_transcription():
+    """清除转录结果并重新转录"""
+    data = await request.json
+    video_path = data.get('video_path', '')
+
+    if not video_path:
+        return jsonify({'success': False, 'error': '缺少 video_path 参数'}), 400
+    if not os.path.exists(video_path):
+        return jsonify({'success': False, 'error': '源文件不存在'}), 404
+
+    cfg = load_transcription_config()
+    if not cfg.get('siliconflow_api_key') or cfg['siliconflow_api_key'].startswith('your_'):
+        return jsonify({'success': False, 'error': '请先配置 siliconflow_api_key'}), 400
+
+    clear_transcription_output(video_path)
+
+    task_id = _make_task_id(video_path)
+    asyncio_task = asyncio.create_task(run_transcription(video_path, cfg))
+    asyncio_task.add_done_callback(
+        lambda t: print(f"转录任务完成，异常={t.exception()}") if t.exception() else None
+    )
+
+    return jsonify({'success': True, 'task_id': task_id, 'message': '已清除结果并重新启动'})
 
 
 if __name__ == "__main__":

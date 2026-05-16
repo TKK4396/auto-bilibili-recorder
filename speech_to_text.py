@@ -128,6 +128,7 @@ def find_all_transcription_files(base_dir: str) -> List[str]:
     for suffix in ('.all.bar.mp4', '.aac', '.mp3'):
         pattern = os.path.join(base_dir, '**', '*' + suffix)
         files.extend(glob.glob(pattern, recursive=True))
+    files = [f for f in files if '.segments' + os.sep not in f.replace('/', os.sep)]
     files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
     return files
 
@@ -137,6 +138,26 @@ def _get_output_txt_path(video_path: str) -> str:
     if ext in ('.mp4', '.aac', '.mp3'):
         return base + '.tran.txt'
     return video_path + '.tran.txt'
+
+
+def clear_transcription_output(video_path: str) -> None:
+    """清除转录结果和临时音频文件，保留源文件"""
+    task_id = _make_task_id(video_path)
+    _tasks.pop(task_id, None)
+
+    tran_txt = _get_output_txt_path(video_path)
+    try:
+        os.remove(tran_txt)
+    except OSError:
+        pass
+
+    if not video_path.endswith('.mp3'):
+        base, _ = os.path.splitext(video_path)
+        audio_cache = base + '.audio.mp3'
+        try:
+            os.remove(audio_cache)
+        except OSError:
+            pass
 
 
 def _get_file_size_mb(file_path: str) -> float:
@@ -268,7 +289,7 @@ def transcribe_segment(api_key: str, model: str, segment_path: str,
                 data = {'model': model}
                 headers = {'Authorization': f'Bearer {api_key}'}
 
-                response = requests.post(url, headers=headers, files=files, data=data, timeout=300)
+                response = requests.post(url, headers=headers, files=files, data=data, timeout=900)
                 response.raise_for_status()
                 result = response.json()
                 return result.get('text', '')
