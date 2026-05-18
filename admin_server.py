@@ -4,6 +4,7 @@ import yaml
 import os
 import asyncio
 from db_manager import DBManager
+from bili_web_api import BiliBili
 from speech_to_text import (
     find_all_transcription_files, run_transcription, get_task,
     get_task_by_path, get_all_tasks, delete_task,
@@ -295,6 +296,122 @@ async def reprocess_transcription():
     )
 
     return jsonify({'success': True, 'task_id': task_id, 'message': '已清除结果并重新启动'})
+
+
+# ========== 账号登录 API ==========
+
+@app.route('/api/config/accounts')
+async def get_config_accounts():
+    """返回配置中所有账号名列表"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        accounts = list((config.get('accounts') or {}).keys())
+        return jsonify({'success': True, 'accounts': accounts})
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': '配置文件不存在'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/login/qrcode', methods=['POST'])
+async def generate_qrcode():
+    """生成 B站 Web 扫码登录二维码"""
+    bili = BiliBili(None)
+    try:
+        result = await asyncio.to_thread(bili.get_web_qrcode)
+        if result and result.get('code') == 0:
+            return jsonify({
+                'success': True,
+                'qrcode_key': result.get('data', {}).get('qrcode_key'),
+                'url': result.get('data', {}).get('url'),
+            })
+        message = result.get('message', '获取二维码失败') if result else 'API 无响应'
+        return jsonify({'success': False, 'error': message}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/login/qrcode/poll')
+async def poll_qrcode():
+    """单次轮询扫码状态"""
+    qrcode_key = request.args.get('qrcode_key', '')
+    if not qrcode_key:
+        return jsonify({'success': False, 'error': '缺少 qrcode_key 参数'}), 400
+
+    bili = BiliBili(None)
+    try:
+        result = await asyncio.to_thread(bili.poll_web_qrcode_once, qrcode_key)
+        code = result.get('code', -1)
+
+        if code == 0:
+            cookies = bili.cookies or {}
+            cookie_data = {
+                'sessdata': cookies.get('SESSDATA', ''),
+                'bili_jct': cookies.get('bili_jct', ''),
+                'dedeuserid': cookies.get('DedeUserID', ''),
+                'buvid3': cookies.get('buvid3', ''),
+                'buvid4': cookies.get('buvid4', ''),
+            }
+            masked = {}
+            for k, v in cookie_data.items():
+                if v and len(v) > 8:
+                    masked[k] = v[:4] + '*' * (len(v) - 8) + v[-4:]
+                elif v:
+                    masked[k] = v[:2] + '***'
+                else:
+                    masked[k] = ''
+            return jsonify({
+                'success': True,
+                'status': 'success',
+                'code': 0,
+                'cookies': cookie_data,
+                'cookies_masked': masked,
+            })
+
+        status_map = {86101: 'waiting', 86090: 'scanned', 86038: 'expired'}
+        status = status_map.get(code, 'unknown')
+        return jsonify({'success': True, 'status': status, 'code': code})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/login/qrcode/save', methods=['POST'])
+async def save_qrcode_cookies():
+    """保存扫码登录 cookie 到指定账号配置"""
+    data = await request.json or {}
+    account_name = data.get('account_name', '')
+    cookies = data.get('cookies', {})
+
+    if not account_name:
+        return jsonify({'success': False, 'error': '缺少 account_name 参数'}), 400
+
+    allowed_fields = ['sessdata', 'bili_jct', 'dedeuserid', 'buvid3', 'buvid4']
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+
+        if 'accounts' not in config or account_name not in config['accounts']:
+            return jsonify({'success': False, 'error': f'账号 {account_name} 不存在'}), 404
+
+        for field in allowed_fields:
+            if field in cookies and cookies[field]:
+                config['accounts'][account_name][field] = cookies[field]
+
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+        return jsonify({
+            'success': True,
+            'message': 'Cookie 已保存到配置文件',
+            'path': CONFIG_PATH
+        })
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': '配置文件不存在'}), 404
+    except yaml.YAMLError as e:
+        return jsonify({'success': False, 'error': f'YAML 解析错误: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == "__main__":

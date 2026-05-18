@@ -50,6 +50,40 @@ class BiliBili:
         self._auto_os = None
         self.persistence_path = 'engine/bili.cookie'
 
+    def get_web_qrcode(self):
+        """生成 B站 Web 端扫码登录二维码"""
+        response = self.__session.post(
+            'https://passport.bilibili.com/x/passport-login/web/qrcode/generate',
+            timeout=5
+        )
+        return response.json()
+
+    def poll_web_qrcode_once(self, qrcode_key):
+        """单次轮询 Web 端扫码状态（不循环），成功后提取 cookies"""
+        response = self.__session.get(
+            'https://passport.bilibili.com/x/passport-login/web/qrcode/poll',
+            params={'qrcode_key': qrcode_key},
+            timeout=5
+        )
+        r = response.json()
+
+        if r and r.get('code') == 0:
+            data = r.get('data', {})
+            cookie_info = data.get('cookie_info', {})
+            for cookie in cookie_info.get('cookies', []):
+                self.__session.cookies.set(cookie['name'], cookie['value'])
+                if cookie['name'] == 'bili_jct':
+                    self.__bili_jct = cookie['value']
+            redirect_url = data.get('url', '')
+            if redirect_url:
+                try:
+                    self.__session.get(redirect_url, timeout=5, allow_redirects=True)
+                except Exception:
+                    pass
+            self.cookies = self.__session.cookies.get_dict()
+
+        return r
+
     def check_tag(self, tag):
         r = self.__session.get("https://member.bilibili.com/x/vupre/web/topic/tag/check?tag=" + tag).json()
         if r["code"] == 0:

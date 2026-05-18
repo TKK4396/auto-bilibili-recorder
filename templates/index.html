@@ -527,6 +527,7 @@
             text-align: right;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 </head>
 <body>
     <!-- 头部 -->
@@ -550,6 +551,9 @@
             </button>
             <button class="nav-tab" onclick="switchTab('transcription')">
                 ▶ 语音转文字
+            </button>
+            <button class="nav-tab" onclick="switchTab('login')">
+                ▶ 账号登录
             </button>
         </div>
 
@@ -612,6 +616,55 @@
                             <div class="spinner"></div>
                             <div class="loading-text">加载中...</div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 账号登录面板 -->
+    <div id="panel-login" class="tab-panel">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">B站扫码登录</div>
+                <button class="btn btn-primary" onclick="loadAccountList()">↻ 刷新账号列表</button>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label class="form-label">选择账号</label>
+                    <select id="loginAccountSelect" class="form-select">
+                        <option value="">-- 请加载账号列表 --</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                    <button id="getQRBtn" class="btn btn-primary" onclick="getQRCode()">▶ 获取二维码</button>
+                </div>
+                <div id="qrCodeArea" style="display: none; text-align: center; margin-bottom: 20px;">
+                    <div id="qrcode" style="display: inline-block; background: white; padding: 16px; border-radius: 4px;"></div>
+                    <div id="qrStatus" style="margin-top: 12px; font-size: 14px;"></div>
+                    <div style="margin-top: 8px;">
+                        <button class="btn btn-ghost" onclick="resetLoginUI()">取消</button>
+                    </div>
+                </div>
+                <div id="loginResult" style="display: none;">
+                    <div class="card">
+                        <div class="card-header"><div class="card-title">登录成功 - Cookie</div></div>
+                        <div class="card-body">
+                            <div class="table-container"><table>
+                                <thead><tr><th>字段</th><th>值</th></tr></thead>
+                                <tbody id="cookieTableBody"></tbody>
+                            </table></div>
+                            <div style="margin-top: 16px; display: flex; gap: 12px;">
+                                <button class="btn btn-success" onclick="saveLoginCookies()">▶ 保存到配置</button>
+                                <span id="saveResultHint" style="font-size: 12px; color: var(--p-light-gray); display: flex; align-items: center;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="loginError" style="display: none;">
+                    <div class="empty-state">
+                        <div class="empty-icon">✕</div>
+                        <div class="empty-text" id="loginErrorText"></div>
                     </div>
                 </div>
             </div>
@@ -696,7 +749,9 @@
             document.querySelector(`.nav-tab[onclick="switchTab('${tabName}')"]`).classList.add('active');
             document.getElementById(`panel-${tabName}`).classList.add('active');
 
-            if (tabName === 'config') {
+            if (tabName === 'login') {
+                loadAccountList();
+            } else if (tabName === 'config') {
                 loadConfig();
             } else if (tabName === 'transcription') {
                 loadTranscriptionFiles(true);
@@ -706,6 +761,201 @@
             if (tabName !== 'transcription' && tranPollTimer) {
                 clearInterval(tranPollTimer);
                 tranPollTimer = null;
+            }
+
+            if (tabName !== 'login' && qrPollTimer) {
+                stopQRPolling();
+            }
+        }
+
+        // ========== 账号登录 (QR Code) ==========
+
+        let currentQRKey = '';
+        let qrPollTimer = null;
+        let currentCookies = null;
+        let currentAccountName = '';
+
+        async function loadAccountList() {
+            const select = document.getElementById('loginAccountSelect');
+            select.innerHTML = '<option value="">加载中...</option>';
+            try {
+                const resp = await fetch('/api/config/accounts');
+                const result = await resp.json();
+                if (result.success && Array.isArray(result.accounts)) {
+                    select.innerHTML = '<option value="">-- 选择账号 --</option>';
+                    result.accounts.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        select.appendChild(opt);
+                    });
+                } else {
+                    select.innerHTML = '<option value="">加载失败</option>';
+                }
+            } catch (e) {
+                select.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        async function getQRCode() {
+            const select = document.getElementById('loginAccountSelect');
+            const accountName = select.value;
+            if (!accountName) { alert('请先选择一个账号'); return; }
+
+            currentAccountName = accountName;
+            const btn = document.getElementById('getQRBtn');
+            btn.disabled = true;
+            btn.textContent = '获取中...';
+
+            document.getElementById('qrCodeArea').style.display = 'none';
+            document.getElementById('loginResult').style.display = 'none';
+            document.getElementById('loginError').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login/qrcode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ account_name: accountName })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    showLoginError(result.error || '获取二维码失败');
+                    btn.disabled = false;
+                    btn.textContent = '▶ 获取二维码';
+                    return;
+                }
+
+                currentQRKey = result.qrcode_key;
+                document.getElementById('qrcode').innerHTML = '';
+                new QRCode(document.getElementById('qrcode'), {
+                    text: result.url,
+                    width: 200, height: 200,
+                    colorDark: '#000000', colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+
+                document.getElementById('qrCodeArea').style.display = 'block';
+                document.getElementById('qrStatus').textContent = '等待扫码...';
+                document.getElementById('qrStatus').style.color = 'var(--p-blue)';
+
+                if (qrPollTimer) clearInterval(qrPollTimer);
+                qrPollTimer = setInterval(pollQRCode, 2000);
+                pollQRCode();
+
+                btn.textContent = '重新获取';
+                btn.disabled = false;
+            } catch (e) {
+                showLoginError('请求失败: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '▶ 获取二维码';
+            }
+        }
+
+        async function pollQRCode() {
+            if (!currentQRKey) return;
+            try {
+                const resp = await fetch('/api/login/qrcode/poll?qrcode_key=' + encodeURIComponent(currentQRKey));
+                const result = await resp.json();
+                if (!result.success) {
+                    stopQRPolling();
+                    showLoginError(result.error || '轮询失败');
+                    return;
+                }
+                const statusEl = document.getElementById('qrStatus');
+                if (result.status === 'waiting') {
+                    statusEl.textContent = '等待扫码...';
+                    statusEl.style.color = 'var(--p-blue)';
+                } else if (result.status === 'scanned') {
+                    statusEl.textContent = '已扫码，请在手机上确认';
+                    statusEl.style.color = 'var(--p-yellow)';
+                } else if (result.status === 'success') {
+                    stopQRPolling();
+                    statusEl.textContent = '登录成功！';
+                    statusEl.style.color = '#00CC66';
+                    showLoginResult(result.cookies, result.cookies_masked);
+                } else if (result.status === 'expired') {
+                    stopQRPolling();
+                    statusEl.textContent = '二维码已过期，请重新获取';
+                    statusEl.style.color = 'var(--p-red)';
+                }
+            } catch (e) {
+                stopQRPolling();
+                showLoginError('轮询失败: ' + e.message);
+            }
+        }
+
+        function showLoginResult(cookies, masked) {
+            currentCookies = cookies;
+            const tbody = document.getElementById('cookieTableBody');
+            tbody.innerHTML = '';
+            const fields = [
+                { key: 'sessdata', label: 'SESSDATA' },
+                { key: 'bili_jct', label: 'bili_jct' },
+                { key: 'dedeuserid', label: 'DedeUserID' },
+                { key: 'buvid3', label: 'buvid3' },
+                { key: 'buvid4', label: 'buvid4' }
+            ];
+            fields.forEach(f => {
+                const val = (masked && masked[f.key]) ? masked[f.key] : '***';
+                const isPresent = cookies && cookies[f.key];
+                const row = document.createElement('tr');
+                row.innerHTML = '<td><strong>' + escapeHtml(f.label) + '</strong></td>' +
+                    '<td style="font-family: monospace; color: ' + (isPresent ? 'var(--p-yellow)' : 'var(--p-light-gray)') + ';">' +
+                    escapeHtml(val) + '</td>';
+                tbody.appendChild(row);
+            });
+            document.getElementById('loginResult').style.display = 'block';
+            document.getElementById('saveResultHint').textContent = '';
+        }
+
+        function stopQRPolling() {
+            if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+        }
+
+        function resetLoginUI() {
+            stopQRPolling();
+            currentQRKey = '';
+            currentCookies = null;
+            document.getElementById('qrCodeArea').style.display = 'none';
+            document.getElementById('loginResult').style.display = 'none';
+            document.getElementById('loginError').style.display = 'none';
+            document.getElementById('getQRBtn').disabled = false;
+            document.getElementById('getQRBtn').textContent = '▶ 获取二维码';
+        }
+
+        function showLoginError(message) {
+            document.getElementById('loginErrorText').textContent = message;
+            document.getElementById('loginError').style.display = 'block';
+        }
+
+        async function saveLoginCookies() {
+            if (!currentCookies || !currentAccountName) { alert('没有可保存的登录信息'); return; }
+            const saveBtn = document.querySelector('#loginResult .btn-success');
+            const hintEl = document.getElementById('saveResultHint');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '保存中...';
+            hintEl.textContent = '';
+
+            try {
+                const resp = await fetch('/api/login/qrcode/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ account_name: currentAccountName, cookies: currentCookies })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    saveBtn.textContent = '已保存 ✓';
+                    hintEl.textContent = 'Cookie 已保存到配置文件';
+                    hintEl.style.color = '#00CC66';
+                } else {
+                    alert('保存失败: ' + (result.error || '未知错误'));
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '▶ 保存到配置';
+                }
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+                saveBtn.disabled = false;
+                saveBtn.textContent = '▶ 保存到配置';
             }
         }
 
