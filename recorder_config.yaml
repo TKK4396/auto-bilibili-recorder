@@ -6,7 +6,11 @@ accounts:
     name: TestBot
     sessdata: "your_sessdata_here"
     bili_jct: "your_bili_jct_here"
-    line: "kodo"
+    line: "auto"
+    # app_key: "ae57252b0c09105d"     # 可选：用于原生 API 密码登录
+    # appsec: "c75875c596a69eb55bd119e74b07cfe3"  # 可选：用于原生 API 密码登录
+    # access_token: ""   # 可选：扫码登录后自动填充
+    # refresh_token: ""  # 可选：扫码登录后自动填充
 
 rooms:
   - id: 128308

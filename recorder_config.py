@@ -13,6 +13,10 @@ class UploaderAccount:
     dedeuserid: str
     login_proxy: str
     access_token: str
+    refresh_token: str
+    app_key: str
+    appsec: str
+    cookie_file: str
     line: str
     verify: Credential
 
@@ -30,22 +34,40 @@ class UploaderAccount:
             "bili_jct": getattr(self, "bili_jct", None),
         })
 
+    def get_cookie_file_dict(self):
+        """生成兼容 BiliBili 原生 API 的 cookie 文件格式（嵌套结构）"""
+        cookies = []
+        for field, bili_name in [
+            ("buvid3", "buvid3"), ("buvid4", "buvid4"),
+            ("dedeuserid", "DedeUserID"), ("sessdata", "SESSDATA"),
+            ("bili_jct", "bili_jct")
+        ]:
+            val = getattr(self, field, None)
+            if val:
+                cookies.append({"name": bili_name, "value": val})
+        return {
+            "cookie_info": {"cookies": cookies},
+            "token_info": {
+                "access_token": getattr(self, "access_token", None),
+                "refresh_token": getattr(self, "refresh_token", None)
+            }
+        }
+
     def login(self):
         print(self.__dict__)
-        # Check if all required cookies are present and not placeholder values
         required_cookies = ["sessdata", "bili_jct", "buvid3", "buvid4", "dedeuserid"]
         has_all_cookies = all(
             hasattr(self, cookie) and getattr(self, cookie) and not getattr(self, cookie).startswith("your_")
             for cookie in required_cookies
         )
-        
+
         if not has_all_cookies:
             print(f"Warning: Missing or invalid cookies for {self.name}. Running in test mode without login.")
             self.verify = None
             if not hasattr(self, "line"):
                 self.line = "auto"
             return
-            
+
         self.verify = Credential.from_cookies(self.get_cookie_dict())
         if not sync(self.verify.check_valid()):
             print(f"Warning: Login failed for {self.name}. Running in test mode.")

@@ -174,7 +174,7 @@ class Session:
         new_length = self.total_length + video.video_length
         if (new_length // self.notify_length) != (self.total_length // self.notify_length):
             self.length_alert = True
-        self.total_length += new_length
+        self.total_length = new_length
 
     def output_base_path(self):
         return self.videos[0].base_path + ".all"
@@ -258,7 +258,7 @@ class Session:
                 break
             local_he_time -= video.video_length_flv
         if not thumbnail_generated:  # Rare case where he_pos is after the last video
-            print(f"{self.output_path()['video']}: thumbnail at {local_he_time} cannot be found")
+            print(f"session {self.session_id}: thumbnail at {local_he_time} cannot be found, using middle of last video")
             await self.videos[-1].gen_thumbnail(
                 self.videos[-1].video_length_flv / 2,
                 self.output_path()['thumbnail'],
@@ -302,7 +302,7 @@ class Session:
 
     async def process_early_video(self):
         if len(self.videos) == 1:
-            self.early_video_path = self.videos[0].flv_file_path
+            self.early_video_path = self.videos[0].flv_file_path()
         format_check = True
         ref_video_res = self.videos[0].video_resolution
         for video in self.videos:

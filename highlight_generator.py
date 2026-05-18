@@ -722,22 +722,25 @@ class HighlightGenerator:
             command = f'ffmpeg -y {inputs} -filter_complex {filter_complex} -map "[outv]" -map "[outa]" -c:v libx264 -preset medium -c:a aac "{output_path}"'
         
         stdout, stderr, returncode = await async_run_command(command, log_path)
-        
-        # 清理临时文件
-        if os.path.exists(concat_file):
-            os.remove(concat_file)
-        
+
         if returncode != 0:
             print(f"Failed to create highlight video: {stderr.decode('utf-8', errors='ignore')}")
             # 尝试简单的 concat 方式
             print("Trying simple concat method...")
             command = f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" -c copy "{output_path}"'
             stdout, stderr, returncode = await async_run_command(command, log_path)
-            
+
             if returncode != 0:
                 print(f"Simple concat also failed: {stderr.decode('utf-8', errors='ignore')}")
+                # 清理临时文件
+                if os.path.exists(concat_file):
+                    os.remove(concat_file)
                 return False
-        
+
+        # 清理临时文件
+        if os.path.exists(concat_file):
+            os.remove(concat_file)
+
         success = os.path.exists(output_path)
         if success:
             print(f"Highlight video created: {output_path}")
@@ -884,7 +887,7 @@ class HighlightGenerator:
             transcription = []
             if audio_extraction_success:
                 try:
-                    transcription = self.speech_to_text(audio_path)
+                    transcription = await asyncio.to_thread(self.speech_to_text, audio_path)
                     if not transcription:
                         print(f"{PREFIX} [WARN] Speech-to-text returned empty, relying on danmaku data")
                 except Exception as e:

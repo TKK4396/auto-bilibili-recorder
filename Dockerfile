@@ -62,7 +62,6 @@ RUN . venv/bin/activate && \
 # The model will be downloaded on first use if not pre-downloaded
 # RUN . venv/bin/activate && python3 -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cuda', compute_type='float16')"
 
-RUN wget https://raw.githubusercontent.com/valkjsaaa/Bilibili-Toolkit/7b86a61214149cc3f790d02d5d06ecd7540b9bdb/bilibili.py
 COPY *.py ./
 COPY templates/ ./templates/
 COPY start.sh /

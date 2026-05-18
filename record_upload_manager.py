@@ -10,7 +10,6 @@ from string import Template
 
 import dateutil.parser
 import yaml
-from bilibili_api import sync
 
 from comment_task import CommentTask
 from recorder_config import RecorderConfig, UploaderAccount
@@ -76,7 +75,7 @@ class RecordUploadManager:
     #         upload_task = self.video_upload_queue.get()
     #         try:
     #             first_video_comment = upload_task.session_id not in self.save.session_id_map
-    #             bv_id = sync(upload_task.upload(self.save.session_id_map))
+    #             bv_id = asyncio.run(upload_task.upload(self.save.session_id_map))
     #             sys.stdout.flush()
     #             with self.save_lock:
     #                 self.save.session_id_map[upload_task.session_id] = bv_id
@@ -107,7 +106,7 @@ class RecordUploadManager:
                 self.db_manager.update_status(upload_task.db_id, 1) # 开始上传
             try:
                 first_video_comment = upload_task.session_id not in self.save.session_id_map
-                bv_id = sync(upload_task.upload(self.save.session_id_map))
+                bv_id = asyncio.run(upload_task.upload(self.save.session_id_map))
                 sys.stdout.flush()
                 with self.save_lock:
                     self.save.session_id_map[upload_task.session_id] = bv_id
@@ -177,9 +176,9 @@ class RecordUploadManager:
                     task_to_remove = []
                     for idx, task in enumerate(self.save.active_comment_tasks):
                         task: CommentTask
-                        if sync(task.post_comment(self.save.session_id_map)):
+                        if asyncio.run(task.post_comment(self.save.session_id_map)):
                             task_to_remove += [idx]
-                    if task_to_remove != 0:
+                    if task_to_remove:
                         with self.save_lock:
                             self.save.active_comment_tasks = [
                                 comment_task
@@ -206,9 +205,9 @@ class RecordUploadManager:
                     for idx, task in enumerate(self.save.active_subtitle_tasks):
                         task: SubtitleTask
                         print("try posting subtitle")
-                        if sync(task.post_subtitle()):
+                        if asyncio.run(task.post_subtitle()):
                             task_to_remove += [idx]
-                    if task_to_remove != 0:
+                    if task_to_remove:
                         with self.save_lock:
                             new_subtitle_tasks = []
                             for idx, subtitle_task in enumerate(self.save.active_subtitle_tasks):
@@ -270,7 +269,7 @@ class RecordUploadManager:
         ]
         while temp_title in other_video_titles:
             i += 1
-            temp_title = f"{temp_title}{i}"
+            temp_title = f"{title}{i}"
         title = temp_title
         with self.save_lock:
             self.save.video_name_history[session.session_id] = title

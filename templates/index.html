@@ -626,7 +626,7 @@
     <div id="panel-login" class="tab-panel">
         <div class="card">
             <div class="card-header">
-                <div class="card-title">B站扫码登录</div>
+                <div class="card-title">B站账号登录</div>
                 <button class="btn btn-primary" onclick="loadAccountList()">↻ 刷新账号列表</button>
             </div>
             <div class="card-body">
@@ -636,16 +636,61 @@
                         <option value="">-- 请加载账号列表 --</option>
                     </select>
                 </div>
-                <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-                    <button id="getQRBtn" class="btn btn-primary" onclick="getQRCode()">▶ 获取二维码</button>
+                <div class="form-group" style="display: flex; gap: 4px; margin-bottom: 16px;">
+                    <button class="btn btn-primary" id="tabQR" onclick="switchLoginMethod('qr')" style="flex: 1;">扫码登录</button>
+                    <button class="btn btn-ghost" id="tabPwd" onclick="switchLoginMethod('pwd')" style="flex: 1;">密码登录</button>
+                    <button class="btn btn-ghost" id="tabSMS" onclick="switchLoginMethod('sms')" style="flex: 1;">短信登录</button>
                 </div>
-                <div id="qrCodeArea" style="display: none; text-align: center; margin-bottom: 20px;">
-                    <div id="qrcode" style="display: inline-block; background: white; padding: 16px; border-radius: 4px;"></div>
-                    <div id="qrStatus" style="margin-top: 12px; font-size: 14px;"></div>
-                    <div style="margin-top: 8px;">
-                        <button class="btn btn-ghost" onclick="resetLoginUI()">取消</button>
+
+                <!-- 扫码登录表单 -->
+                <div id="loginFormQR">
+                    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                        <button id="getQRBtn" class="btn btn-primary" onclick="getQRCode()">▶ 获取二维码</button>
+                    </div>
+                    <div id="qrCodeArea" style="display: none; text-align: center; margin-bottom: 20px;">
+                        <div id="qrcode" style="display: inline-block; background: white; padding: 16px; border-radius: 4px;"></div>
+                        <div id="qrStatus" style="margin-top: 12px; font-size: 14px;"></div>
+                        <div style="margin-top: 8px;">
+                            <button class="btn btn-ghost" onclick="resetLoginUI()">取消</button>
+                        </div>
                     </div>
                 </div>
+
+                <!-- 密码登录表单 -->
+                <div id="loginFormPwd" style="display: none;">
+                    <div class="form-group">
+                        <label class="form-label">用户名/手机号</label>
+                        <input type="text" id="passwordUsername" class="form-input" placeholder="B站用户名或手机号">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">密码</label>
+                        <input type="password" id="passwordInput" class="form-input" placeholder="B站密码">
+                    </div>
+                    <button id="pwdLoginBtn" class="btn btn-primary" onclick="loginByPassword()" style="width: 100%;">▶ 登录</button>
+                </div>
+
+                <!-- 短信登录表单 -->
+                <div id="loginFormSMS" style="display: none;">
+                    <div class="form-group">
+                        <label class="form-label">区号</label>
+                        <input type="text" id="smsCountryCode" class="form-input" value="86" placeholder="如: 86">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">手机号</label>
+                        <input type="text" id="smsPhone" class="form-input" placeholder="B站绑定手机号">
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                        <button id="sendSmsBtn" class="btn btn-primary" onclick="sendSmsCode()">发送验证码</button>
+                        <span id="smsCountdown" style="display: none; font-size: 14px; color: var(--p-light-gray); align-self: center;"></span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">验证码</label>
+                        <input type="text" id="smsCode" class="form-input" placeholder="短信验证码">
+                    </div>
+                    <button id="smsLoginBtn" class="btn btn-primary" onclick="loginBySms()" style="width: 100%;">▶ 登录</button>
+                </div>
+
+                <!-- 登录结果（三种方式共享） -->
                 <div id="loginResult" style="display: none;">
                     <div class="card">
                         <div class="card-header"><div class="card-title">登录成功 - Cookie</div></div>
@@ -773,7 +818,29 @@
         let currentQRKey = '';
         let qrPollTimer = null;
         let currentCookies = null;
+        let currentAccessToken = '';
+        let currentRefreshToken = '';
         let currentAccountName = '';
+        let currentLoginMethod = 'qr';
+        let smsParams = null;
+        let smsCountdownTimer = null;
+
+        function switchLoginMethod(method) {
+            currentLoginMethod = method;
+            resetLoginUI();
+            document.getElementById('loginFormQR').style.display = method === 'qr' ? 'block' : 'none';
+            document.getElementById('loginFormPwd').style.display = method === 'pwd' ? 'block' : 'none';
+            document.getElementById('loginFormSMS').style.display = method === 'sms' ? 'block' : 'none';
+            ['tabQR', 'tabPwd', 'tabSMS'].forEach(id => {
+                const el = document.getElementById(id);
+                el.className = 'btn btn-' + (id === ('tab' + method.toUpperCase()) ? 'primary' : 'ghost');
+                if (id === 'tabQR') el.className += '';
+            });
+            // 修复 tabPwd 和 tabSMS 的 class
+            document.getElementById('tabQR').className = 'btn btn-' + (method === 'qr' ? 'primary' : 'ghost');
+            document.getElementById('tabPwd').className = 'btn btn-' + (method === 'pwd' ? 'primary' : 'ghost');
+            document.getElementById('tabSMS').className = 'btn btn-' + (method === 'sms' ? 'primary' : 'ghost');
+        }
 
         async function loadAccountList() {
             const select = document.getElementById('loginAccountSelect');
@@ -872,7 +939,7 @@
                     stopQRPolling();
                     statusEl.textContent = '登录成功！';
                     statusEl.style.color = '#00CC66';
-                    showLoginResult(result.cookies, result.cookies_masked);
+                    showLoginResult(result.cookies, result.cookies_masked, result.access_token, result.refresh_token);
                 } else if (result.status === 'expired') {
                     stopQRPolling();
                     statusEl.textContent = '二维码已过期，请重新获取';
@@ -884,8 +951,10 @@
             }
         }
 
-        function showLoginResult(cookies, masked) {
+        function showLoginResult(cookies, masked, accessToken, refreshToken) {
             currentCookies = cookies;
+            if (accessToken !== undefined) currentAccessToken = accessToken || '';
+            if (refreshToken !== undefined) currentRefreshToken = refreshToken || '';
             const tbody = document.getElementById('cookieTableBody');
             tbody.innerHTML = '';
             const fields = [
@@ -893,7 +962,7 @@
                 { key: 'bili_jct', label: 'bili_jct' },
                 { key: 'dedeuserid', label: 'DedeUserID' },
                 { key: 'buvid3', label: 'buvid3' },
-                { key: 'buvid4', label: 'buvid4' }
+                { key: 'buvid4', label: 'buvid4' },
             ];
             fields.forEach(f => {
                 const val = (masked && masked[f.key]) ? masked[f.key] : '***';
@@ -904,6 +973,13 @@
                     escapeHtml(val) + '</td>';
                 tbody.appendChild(row);
             });
+            if (accessToken) {
+                const row = document.createElement('tr');
+                const maskedAt = accessToken ? accessToken.substring(0, 8) + '***' : '***';
+                row.innerHTML = '<td><strong>access_token</strong></td>' +
+                    '<td style="font-family: monospace; color: var(--p-yellow);">' + escapeHtml(maskedAt) + '</td>';
+                tbody.appendChild(row);
+            }
             document.getElementById('loginResult').style.display = 'block';
             document.getElementById('saveResultHint').textContent = '';
         }
@@ -914,13 +990,24 @@
 
         function resetLoginUI() {
             stopQRPolling();
+            if (smsCountdownTimer) { clearInterval(smsCountdownTimer); smsCountdownTimer = null; }
             currentQRKey = '';
             currentCookies = null;
+            currentAccessToken = '';
+            currentRefreshToken = '';
+            smsParams = null;
             document.getElementById('qrCodeArea').style.display = 'none';
             document.getElementById('loginResult').style.display = 'none';
             document.getElementById('loginError').style.display = 'none';
             document.getElementById('getQRBtn').disabled = false;
             document.getElementById('getQRBtn').textContent = '▶ 获取二维码';
+            document.getElementById('smsCountdown').style.display = 'none';
+            document.getElementById('sendSmsBtn').disabled = false;
+            document.getElementById('sendSmsBtn').textContent = '发送验证码';
+            document.getElementById('pwdLoginBtn').disabled = false;
+            document.getElementById('pwdLoginBtn').textContent = '▶ 登录';
+            document.getElementById('smsLoginBtn').disabled = false;
+            document.getElementById('smsLoginBtn').textContent = '▶ 登录';
         }
 
         function showLoginError(message) {
@@ -940,7 +1027,12 @@
                 const resp = await fetch('/api/login/qrcode/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ account_name: currentAccountName, cookies: currentCookies })
+                    body: JSON.stringify({
+                        account_name: currentAccountName,
+                        cookies: currentCookies,
+                        access_token: currentAccessToken,
+                        refresh_token: currentRefreshToken
+                    })
                 });
                 const result = await resp.json();
                 if (result.success) {
@@ -956,6 +1048,132 @@
                 alert('保存失败: ' + e.message);
                 saveBtn.disabled = false;
                 saveBtn.textContent = '▶ 保存到配置';
+            }
+        }
+
+        // ========== 密码登录 ==========
+
+        async function loginByPassword() {
+            const select = document.getElementById('loginAccountSelect');
+            const accountName = select.value;
+            if (!accountName) { alert('请先选择一个账号'); return; }
+            currentAccountName = accountName;
+
+            const username = document.getElementById('passwordUsername').value.trim();
+            const password = document.getElementById('passwordInput').value;
+            if (!username || !password) { showLoginError('用户名和密码不能为空'); return; }
+
+            const btn = document.getElementById('pwdLoginBtn');
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            document.getElementById('loginResult').style.display = 'none';
+            document.getElementById('loginError').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showLoginResult(result.cookies, result.cookies_masked, result.access_token, result.refresh_token);
+                } else {
+                    showLoginError(result.error || '密码登录失败');
+                }
+            } catch (e) {
+                showLoginError('请求失败: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '▶ 登录';
+            }
+        }
+
+        // ========== 短信登录 ==========
+
+        async function sendSmsCode() {
+            const phone = document.getElementById('smsPhone').value.trim();
+            const countryCode = document.getElementById('smsCountryCode').value.trim() || '86';
+            if (!phone) { showLoginError('请输入手机号'); return; }
+
+            const btn = document.getElementById('sendSmsBtn');
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+            document.getElementById('loginError').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login/sms/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, country_code: countryCode })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    smsParams = result.params;
+                    // 60秒倒计时
+                    let sec = 60;
+                    const cdEl = document.getElementById('smsCountdown');
+                    cdEl.style.display = 'inline';
+                    cdEl.textContent = sec + 's 后可重发';
+                    btn.disabled = true;
+                    btn.textContent = '已发送';
+                    smsCountdownTimer = setInterval(() => {
+                        sec--;
+                        if (sec <= 0) {
+                            clearInterval(smsCountdownTimer);
+                            smsCountdownTimer = null;
+                            cdEl.style.display = 'none';
+                            btn.disabled = false;
+                            btn.textContent = '重新发送';
+                        } else {
+                            cdEl.textContent = sec + 's 后可重发';
+                        }
+                    }, 1000);
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = '发送验证码';
+                    showLoginError(result.error || '发送验证码失败');
+                }
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = '发送验证码';
+                showLoginError('请求失败: ' + e.message);
+            }
+        }
+
+        async function loginBySms() {
+            const select = document.getElementById('loginAccountSelect');
+            const accountName = select.value;
+            if (!accountName) { alert('请先选择一个账号'); return; }
+            currentAccountName = accountName;
+
+            const code = document.getElementById('smsCode').value.trim();
+            if (!code) { showLoginError('请输入验证码'); return; }
+            if (!smsParams) { showLoginError('请先发送验证码'); return; }
+
+            const btn = document.getElementById('smsLoginBtn');
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            document.getElementById('loginResult').style.display = 'none';
+            document.getElementById('loginError').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login/sms/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code, params: smsParams })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showLoginResult(result.cookies, result.cookies_masked, result.access_token, result.refresh_token);
+                } else {
+                    showLoginError(result.error || '短信登录失败');
+                }
+            } catch (e) {
+                showLoginError('请求失败: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '▶ 登录';
             }
         }
 

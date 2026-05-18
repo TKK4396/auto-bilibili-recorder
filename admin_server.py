@@ -61,7 +61,7 @@ async def get_tasks():
         if task.get('extra_info'):
             try:
                 task['extra_info'] = json.loads(task['extra_info'])
-            except:
+            except (json.JSONDecodeError, TypeError):
                 pass
     return jsonify(tasks)
 
@@ -345,28 +345,15 @@ async def poll_qrcode():
         code = result.get('code', -1)
 
         if code == 0:
-            cookies = bili.cookies or {}
-            cookie_data = {
-                'sessdata': cookies.get('SESSDATA', ''),
-                'bili_jct': cookies.get('bili_jct', ''),
-                'dedeuserid': cookies.get('DedeUserID', ''),
-                'buvid3': cookies.get('buvid3', ''),
-                'buvid4': cookies.get('buvid4', ''),
-            }
-            masked = {}
-            for k, v in cookie_data.items():
-                if v and len(v) > 8:
-                    masked[k] = v[:4] + '*' * (len(v) - 8) + v[-4:]
-                elif v:
-                    masked[k] = v[:2] + '***'
-                else:
-                    masked[k] = ''
+            cookie_data, masked, access_token, refresh_token = _extract_cookies_from_bili(bili)
             return jsonify({
                 'success': True,
                 'status': 'success',
                 'code': 0,
                 'cookies': cookie_data,
                 'cookies_masked': masked,
+                'access_token': access_token,
+                'refresh_token': refresh_token,
             })
 
         status_map = {86101: 'waiting', 86090: 'scanned', 86038: 'expired'}
@@ -374,6 +361,29 @@ async def poll_qrcode():
         return jsonify({'success': True, 'status': status, 'code': code})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _extract_cookies_from_bili(bili: BiliBili):
+    """从 BiliBili 实例中提取 cookies 和 token，返回统一格式"""
+    cookies = bili.cookies or {}
+    cookie_data = {
+        'sessdata': cookies.get('SESSDATA', ''),
+        'bili_jct': cookies.get('bili_jct', ''),
+        'dedeuserid': cookies.get('DedeUserID', ''),
+        'buvid3': cookies.get('buvid3', ''),
+        'buvid4': cookies.get('buvid4', ''),
+    }
+    masked = {}
+    for k, v in cookie_data.items():
+        if v and len(v) > 8:
+            masked[k] = v[:4] + '*' * (len(v) - 8) + v[-4:]
+        elif v:
+            masked[k] = v[:2] + '***'
+        else:
+            masked[k] = ''
+    access_token = getattr(bili, 'access_token', '') or ''
+    refresh_token = getattr(bili, 'refresh_token', '') or ''
+    return cookie_data, masked, access_token, refresh_token
 
 
 @app.route('/api/login/qrcode/save', methods=['POST'])
@@ -397,6 +407,11 @@ async def save_qrcode_cookies():
         for field in allowed_fields:
             if field in cookies and cookies[field]:
                 config['accounts'][account_name][field] = cookies[field]
+        # 保存 access_token 和 refresh_token（可从顶层或 cookies 中获取）
+        for token_field in ['access_token', 'refresh_token']:
+            token_val = data.get(token_field, '') or cookies.get(token_field, '')
+            if token_val:
+                config['accounts'][account_name][token_field] = token_val
 
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
@@ -410,6 +425,94 @@ async def save_qrcode_cookies():
         return jsonify({'success': False, 'error': '配置文件不存在'}), 404
     except yaml.YAMLError as e:
         return jsonify({'success': False, 'error': f'YAML 解析错误: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ========== 密码登录 API ==========
+
+@app.route('/api/login/password', methods=['POST'])
+async def login_by_password():
+    """B站密码登录"""
+    data = await request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': '用户名和密码不能为空'}), 400
+
+    bili = BiliBili(None)
+    try:
+        result = await asyncio.to_thread(bili.login_by_password, username, password)
+        if result and result.get('code') == 0:
+            cookie_data, masked, access_token, refresh_token = _extract_cookies_from_bili(bili)
+            return jsonify({
+                'success': True,
+                'status': 'success',
+                'cookies': cookie_data,
+                'cookies_masked': masked,
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+            })
+        message = result.get('message', '密码登录失败') if result else 'API 无响应'
+        return jsonify({'success': False, 'error': message}), 401
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ========== 短信登录 API ==========
+
+@app.route('/api/login/sms/send', methods=['POST'])
+async def send_sms_code():
+    """发送短信验证码，返回 params 供 login_by_sms 使用"""
+    data = await request.json or {}
+    phone = data.get('phone', '').strip()
+    country_code = data.get('country_code', '86')
+
+    if not phone:
+        return jsonify({'success': False, 'error': '手机号不能为空'}), 400
+
+    bili = BiliBili(None)
+    try:
+        result = await asyncio.to_thread(bili.send_sms, phone, country_code)
+        if result and result.get('code') == 0:
+            return jsonify({
+                'success': True,
+                'message': '验证码已发送',
+                'params': result.get('data', {}),
+            })
+        message = result.get('message', '发送失败') if result else 'API 无响应'
+        return jsonify({'success': False, 'error': message}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/login/sms/login', methods=['POST'])
+async def login_by_sms():
+    """短信验证码登录"""
+    data = await request.json or {}
+    code = data.get('code', '').strip()
+    params = data.get('params', {})
+
+    if not code:
+        return jsonify({'success': False, 'error': '验证码不能为空'}), 400
+    if not params:
+        return jsonify({'success': False, 'error': '缺少验证参数，请先发送验证码'}), 400
+
+    bili = BiliBili(None)
+    try:
+        result = await asyncio.to_thread(bili.login_by_sms, code, params)
+        if result and result.get('code') == 0:
+            cookie_data, masked, access_token, refresh_token = _extract_cookies_from_bili(bili)
+            return jsonify({
+                'success': True,
+                'status': 'success',
+                'cookies': cookie_data,
+                'cookies_masked': masked,
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+            })
+        message = result.get('message', '短信登录失败') if result else 'API 无响应'
+        return jsonify({'success': False, 'error': message}), 401
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
