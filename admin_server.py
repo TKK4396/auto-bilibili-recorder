@@ -3,6 +3,7 @@ import json
 import yaml
 import os
 import asyncio
+import time
 from db_manager import DBManager
 from bili_web_api import BiliBili
 from speech_to_text import (
@@ -300,6 +301,29 @@ async def reprocess_transcription():
 
 # ========== 账号登录 API ==========
 
+_QRCODE_SESSION_TTL_SECONDS = 180
+_QRCODE_SESSION_MAX_SIZE = 20
+_qrcode_login_sessions = {}
+
+
+def _cleanup_qrcode_login_sessions():
+    now = time.time()
+    expired_keys = [
+        key for key, item in _qrcode_login_sessions.items()
+        if now - item['created_at'] > _QRCODE_SESSION_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        _qrcode_login_sessions.pop(key, None)
+
+    overflow = len(_qrcode_login_sessions) - _QRCODE_SESSION_MAX_SIZE
+    if overflow > 0:
+        oldest_keys = sorted(
+            _qrcode_login_sessions,
+            key=lambda key: _qrcode_login_sessions[key]['created_at']
+        )[:overflow]
+        for key in oldest_keys:
+            _qrcode_login_sessions.pop(key, None)
+
 @app.route('/api/config/accounts')
 async def get_config_accounts():
     """返回配置中所有账号名列表"""
@@ -317,13 +341,21 @@ async def get_config_accounts():
 @app.route('/api/login/qrcode', methods=['POST'])
 async def generate_qrcode():
     """生成 B站 Web 扫码登录二维码"""
+    _cleanup_qrcode_login_sessions()
     bili = BiliBili(None)
     try:
         result = await asyncio.to_thread(bili.get_web_qrcode)
         if result and result.get('code') == 0:
+            qrcode_key = result.get('data', {}).get('qrcode_key')
+            if qrcode_key:
+                _qrcode_login_sessions[qrcode_key] = {
+                    'bili': bili,
+                    'created_at': time.time()
+                }
+                _cleanup_qrcode_login_sessions()
             return jsonify({
                 'success': True,
-                'qrcode_key': result.get('data', {}).get('qrcode_key'),
+                'qrcode_key': qrcode_key,
                 'url': result.get('data', {}).get('url'),
             })
         message = result.get('message', '获取二维码失败') if result else 'API 无响应'
@@ -335,16 +367,22 @@ async def generate_qrcode():
 @app.route('/api/login/qrcode/poll')
 async def poll_qrcode():
     """单次轮询扫码状态"""
+    _cleanup_qrcode_login_sessions()
     qrcode_key = request.args.get('qrcode_key', '')
     if not qrcode_key:
         return jsonify({'success': False, 'error': '缺少 qrcode_key 参数'}), 400
 
-    bili = BiliBili(None)
+    session_item = _qrcode_login_sessions.get(qrcode_key)
+    if not session_item:
+        return jsonify({'success': False, 'error': '二维码会话不存在或已过期'}), 404
+    bili = session_item['bili']
+
     try:
         result = await asyncio.to_thread(bili.poll_web_qrcode_once, qrcode_key)
         code = result.get('code', -1)
 
         if code == 0:
+            _qrcode_login_sessions.pop(qrcode_key, None)
             cookie_data, masked, access_token, refresh_token = _extract_cookies_from_bili(bili)
             return jsonify({
                 'success': True,
@@ -358,6 +396,8 @@ async def poll_qrcode():
 
         status_map = {86101: 'waiting', 86090: 'scanned', 86038: 'expired'}
         status = status_map.get(code, 'unknown')
+        if status == 'expired':
+            _qrcode_login_sessions.pop(qrcode_key, None)
         return jsonify({'success': True, 'status': status, 'code': code})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

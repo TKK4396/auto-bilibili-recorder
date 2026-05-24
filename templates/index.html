@@ -620,9 +620,8 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- 账号登录面板 -->
+        <!-- 账号登录面板 -->
     <div id="panel-login" class="tab-panel">
         <div class="card">
             <div class="card-header">
@@ -714,6 +713,7 @@
                 </div>
             </div>
         </div>
+    </div>
     </div>
 
     <!-- 转录结果模态框 -->
@@ -831,12 +831,6 @@
             document.getElementById('loginFormQR').style.display = method === 'qr' ? 'block' : 'none';
             document.getElementById('loginFormPwd').style.display = method === 'pwd' ? 'block' : 'none';
             document.getElementById('loginFormSMS').style.display = method === 'sms' ? 'block' : 'none';
-            ['tabQR', 'tabPwd', 'tabSMS'].forEach(id => {
-                const el = document.getElementById(id);
-                el.className = 'btn btn-' + (id === ('tab' + method.toUpperCase()) ? 'primary' : 'ghost');
-                if (id === 'tabQR') el.className += '';
-            });
-            // 修复 tabPwd 和 tabSMS 的 class
             document.getElementById('tabQR').className = 'btn btn-' + (method === 'qr' ? 'primary' : 'ghost');
             document.getElementById('tabPwd').className = 'btn btn-' + (method === 'pwd' ? 'primary' : 'ghost');
             document.getElementById('tabSMS').className = 'btn btn-' + (method === 'sms' ? 'primary' : 'ghost');
@@ -893,6 +887,12 @@
                 }
 
                 currentQRKey = result.qrcode_key;
+                if (typeof QRCode === 'undefined') {
+                    showLoginError('二维码组件加载失败，请检查网络或改用本地静态资源');
+                    btn.disabled = false;
+                    btn.textContent = '▶ 获取二维码';
+                    return;
+                }
                 document.getElementById('qrcode').innerHTML = '';
                 new QRCode(document.getElementById('qrcode'), {
                     text: result.url,

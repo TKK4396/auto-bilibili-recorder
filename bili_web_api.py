@@ -235,7 +235,7 @@ class BiliBili:
     def login_by_password(self, username, password):
         print('使用账号上传')
         key_hash, pub_key = self.get_key()
-        encrypt_password = base64.b64encode(rsa.encrypt(f'{key_hash}{password}'.encode(), pub_key))
+        encrypt_password = base64.b64encode(rsa.encrypt(f'{key_hash}{password}'.encode(), pub_key)).decode()
         payload = {
             "actionKey": 'appkey',
             "appkey": self.app_key,
