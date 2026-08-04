@@ -16,3 +16,8 @@ pymysql==1.1.0
 
 # 高光视频生成依赖
 faster-whisper>=0.10.0
+
+# danmaku_energy_map 运行时依赖（danmaku_tools 的 install_requires 未声明 jieba，
+# 缺失会导致 python3 -m danmaku_tools.danmaku_energy_map ImportError 崩溃，
+# 进而阻断弹幕版视频压制流程）
+jieba==0.42.1

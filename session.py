@@ -15,6 +15,21 @@ from recorder_config import RecoderRoom
 from highlight_generator import HighlightGenerator, generate_highlight_video, HighlightResult
 
 
+def _fmt_ts():
+    """毫秒级时间戳，用于调试日志"""
+    now = datetime.datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+
+
+def log_debug(msg):
+    """统一调试日志入口：带毫秒时间戳并立即 flush，确保 docker logs 实时可见。
+
+    约定：所有业务阶段日志都走这里，便于后续 grep 检索与时间线分析。
+    """
+    print(f"[{_fmt_ts()}] {msg}")
+    sys.stdout.flush()
+
+
 def check_nvidia_gpu():
     """检测 NVIDIA 显卡，使用 nvidia-smi 作为主要检测方式
 
@@ -52,6 +67,11 @@ def check_nvidia_gpu():
 
 
 async def async_wait_output(command):
+    """执行 shell 命令并返回 (returncode, stdout, stderr)。
+
+    返回退出码后，调用方可以判断子进程是否成功，失败时输出错误信息，
+    避免"命令失败但流程静默继续/静默终止"的问题。
+    """
     print(f"running: {command}")
     sys.stdout.flush()
     process = await asyncio.create_subprocess_shell(
@@ -59,10 +79,25 @@ async def async_wait_output(command):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    return_value = await process.communicate()
+    stdout, stderr = await process.communicate()
     sys.stdout.flush()
     sys.stderr.flush()
-    return return_value
+    return process.returncode, stdout, stderr
+
+
+def print_tail(file_path, n=25):
+    """打印文件末尾 n 行，用于定位子进程失败原因（如 extras.log / video.log）"""
+    try:
+        if not os.path.exists(file_path):
+            print(f"  ({file_path} 不存在)")
+            return
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+        print(f"  --- {file_path} 末尾 {min(n, len(lines))} 行 ---")
+        for line in lines[-n:]:
+            print(f"  {line.rstrip()}")
+    except Exception as e:
+        print(f"  读取日志失败: {e}")
 
 
 class Video:
@@ -95,21 +130,22 @@ class Video:
         await async_wait_output(ffmpeg_command_img)
 
     async def query_meta(self):
-        video_length_str = await async_wait_output(
+        log_debug(f"[query_meta] 开始读取视频元数据: {self.flv_file_path()}")
+        _, video_length_str, _ = await async_wait_output(
             f'ffprobe -v error -show_entries format=duration '
             f'-of default=noprint_wrappers=1:nokey=1 "{self.flv_file_path()}"'
         )
-        video_resolution_str = await async_wait_output(
+        _, video_resolution_str, _ = await async_wait_output(
             f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height '
             f'-of csv=s=x:p=0 "{self.flv_file_path()}"'
         )
-        self.video_length_flv = float(video_length_str[0].decode('utf-8').strip())
-        self.video_resolution = str(video_resolution_str[0].decode('utf-8').strip())
+        self.video_length_flv = float(video_length_str.decode('utf-8').strip())
+        self.video_resolution = str(video_resolution_str.decode('utf-8').strip())
         video_resolutions = self.video_resolution.split("x")
         self.video_resolution_x, self.video_resolution_y = int(video_resolutions[0]), int(video_resolutions[1])
 
         # 获取帧率
-        fps_str = await async_wait_output(
+        _, fps_str, _ = await async_wait_output(
             f'ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate '
             f'-of default=noprint_wrappers=1:nokey=1 "{self.flv_file_path()}"'
         )
@@ -123,6 +159,8 @@ class Video:
             self.video_fps = float(fps_value)
 
         print(f"视频帧率: {self.video_fps}fps")
+        log_debug(f"[query_meta] 完成: 时长={self.video_length_flv}s 分辨率={self.video_resolution} "
+                  f"帧率={self.video_fps}fps -> {self.flv_file_path()}")
 
 class Session:
     session_id: str
@@ -163,18 +201,26 @@ class Session:
         if update_json["EventType"] == "SessionEnded":
             self.end_time = dateutil.parser.isoparse(update_json["EventTimestamp"])
 
+    def _log(self, msg):
+        """会话级日志：自动带上 [room_id@session_id] 前缀，方便按房间/场次检索"""
+        log_debug(f"[{self.room_id}@{self.session_id}] {msg}")
+
     async def add_video(self, video):
+        log_debug(f"[{self.room_id}@{self.session_id}] 添加视频片段: {video.flv_file_path()} "
+                  f"(录制时长={video.video_length}s)")
         try:
             await video.query_meta()
         except ValueError:
             print(traceback.format_exc())
             print(f"video corrupted, skipping: {video.flv_file_path()}")
+            self._log(f"视频片段损坏已跳过: {video.flv_file_path()}")
             return
         self.videos += [video]
         new_length = self.total_length + video.video_length
         if (new_length // self.notify_length) != (self.total_length // self.notify_length):
             self.length_alert = True
         self.total_length += new_length
+        self._log(f"视频片段已加入，当前共 {len(self.videos)} 个，累计时长 {self.total_length:.1f}s")
 
     def output_base_path(self):
         return self.videos[0].base_path + ".all"
@@ -201,6 +247,7 @@ class Session:
         }
 
     async def merge_xml(self):
+        self._log(f"▶ 阶段 merge_xml 开始：合并 {len(self.videos)} 个弹幕 xml -> {self.output_path()['xml']}")
         xmls = ' '.join(['"' + video.xml_file_path() + '"' for video in self.videos])
         danmaku_merge_command = \
             f"python3 -m danmaku_tools.merge_danmaku " \
@@ -208,17 +255,27 @@ class Session:
             f"--video_time \".flv\" " \
             f"--output \"{self.output_path()['xml']}\" " \
             f">> \"{self.output_path()['extras_log']}\" 2>&1"
+        t0 = time.time()
         await async_wait_output(danmaku_merge_command)
+        self._log(f"✔ 阶段 merge_xml 完成（耗时 {time.time() - t0:.1f}s）")
+        if not os.path.exists(self.output_path()['xml']):
+            self._log(f"[警告] merge_xml 后未找到输出文件: {self.output_path()['xml']}")
 
     async def clean_xml(self):
+        self._log(f"▶ 阶段 clean_xml 开始：{self.output_path()['xml']} -> {self.output_path()['clean_xml']}")
         danmaku_clean_command = \
             f"python3 -m danmaku_tools.clean_danmaku " \
             f"{self.output_path()['xml']} " \
             f"--output \"{self.output_path()['clean_xml']}\" " \
             f">> \"{self.output_path()['extras_log']}\" 2>&1"
+        t0 = time.time()
         await async_wait_output(danmaku_clean_command)
+        self._log(f"✔ 阶段 clean_xml 完成（耗时 {time.time() - t0:.1f}s）")
+        if not os.path.exists(self.output_path()['clean_xml']):
+            self._log(f"[警告] clean_xml 后未找到输出文件: {self.output_path()['clean_xml']}")
 
     async def process_xml(self):
+        self._log(f"▶ 阶段 process_xml (danmaku_energy_map) 开始：输入 {self.output_path()['clean_xml']}")
         danmaku_extras_command = \
             f"python3 -m danmaku_tools.danmaku_energy_map " \
             f"--graph \"{self.output_path()['he_graph']}\" " \
@@ -237,21 +294,43 @@ class Session:
             ) + \
             f"\"{self.output_path()['clean_xml']}\" " \
             f">> \"{self.output_path()['extras_log']}\" 2>&1"
-        await async_wait_output(danmaku_extras_command)
-        with open(self.output_path()['he_pos'], 'r') as file:
-            he_time_str = file.readline()
+        t0 = time.time()
+        returncode, _, _ = await async_wait_output(danmaku_extras_command)
+        self._log(f"  danmaku_energy_map 退出码={returncode}（耗时 {time.time() - t0:.1f}s）")
+        if returncode != 0:
+            # danmaku_energy_map 失败时（如依赖缺失、数据异常）不再静默，
+            # 打印退出码与 extras.log 尾部，便于定位原因
+            print(f"[警告] danmaku_energy_map 退出码 {returncode}，请检查 extras.log 确认失败原因")
+            print_tail(self.output_path()['extras_log'])
+        # 读取高能时间点；文件缺失/内容非法时使用默认值 0，
+        # 避免异常向上传播导致后续视频压制流程被整体阻断
+        try:
+            with open(self.output_path()['he_pos'], 'r') as file:
+                he_time_str = file.readline().strip()
+            if not he_time_str:
+                raise ValueError("he_pos 文件为空")
             self.he_time = float(he_time_str)
+            self._log(f"✔ 阶段 process_xml 完成：高能时间点 he_time={self.he_time}s")
+        except Exception as e:
+            print(f"[警告] 读取高能时间点失败: {e}，使用默认值 0")
+            self.he_time = 0.0
+            self._log(f"⚠ 阶段 process_xml 使用默认 he_time=0.0（原因: {e}）")
 
     def generate_concat(self):
         concat_text = "\n".join([f"file '{video.flv_file_path()}'" for video in self.videos])
         with open(self.output_path()['concat_file'], 'w') as concat_file:
             concat_file.write(concat_text)
+        self._log(f"已生成 concat 列表: {self.output_path()['concat_file']} "
+                  f"（{len(self.videos)} 个片段）")
 
     async def process_thumbnail(self):
+        self._log(f"▶ 阶段 process_thumbnail 开始：he_time={self.he_time}")
         local_he_time = self.he_time
         thumbnail_generated = False
-        for video in self.videos:
+        target_index = -1
+        for i, video in enumerate(self.videos):
             if local_he_time < video.video_length_flv:
+                target_index = i
                 await video.gen_thumbnail(local_he_time, self.output_path()['thumbnail'],
                                           self.output_path()['video_log'])
                 thumbnail_generated = True
@@ -259,11 +338,15 @@ class Session:
             local_he_time -= video.video_length_flv
         if not thumbnail_generated:  # Rare case where he_pos is after the last video
             print(f"{self.output_path()['video']}: thumbnail at {local_he_time} cannot be found")
+            self._log(f"[警告] 高能时间点超出所有视频范围，回退到最后一段视频中点截图")
             await self.videos[-1].gen_thumbnail(
                 self.videos[-1].video_length_flv / 2,
                 self.output_path()['thumbnail'],
                 self.output_path()['video_log']
             )
+        else:
+            self._log(f"✔ 阶段 process_thumbnail 完成：在第 {target_index + 1} 段视频截图 -> "
+                      f"{self.output_path()['thumbnail']}")
 
     def get_resolution(self):
         video_res_sorted = list(reversed([
@@ -289,6 +372,8 @@ class Session:
         video_res_x, video_res_y = self.get_resolution()
         font_size = max(video_res_x, video_res_y) * 55 // 1920
         print(f"font_size: {font_size}")
+        self._log(f"▶ 阶段 process_danmaku 开始：分辨率={video_res_x}x{video_res_y} 字号={font_size} "
+                  f"-> {self.output_path()['ass']}")
         danmaku_conversion_command = \
             f"{BINARY_PATH}DanmakuFactory/DanmakuFactory " \
             f"-x {video_res_x} " \
@@ -298,11 +383,21 @@ class Session:
             f"-i \"{self.output_path()['clean_xml']}\" " \
             f"--fontname \"Noto Sans CJK SC\" -S {font_size} -O 255 -L 1 -D 1 --showusernames true --showmsgbox false" \
             f">> \"{self.output_path()['extras_log']}\" 2>&1"
-        await async_wait_output(danmaku_conversion_command)
+        t0 = time.time()
+        returncode, _, _ = await async_wait_output(danmaku_conversion_command)
+        self._log(f"  DanmakuFactory 退出码={returncode}（耗时 {time.time() - t0:.1f}s）")
+        if returncode != 0:
+            print(f"[警告] DanmakuFactory 退出码 {returncode}，弹幕字幕(.ass)可能未生成")
+            print_tail(self.output_path()['extras_log'])
+        else:
+            self._log(f"✔ 阶段 process_danmaku 完成：弹幕字幕 {self.output_path()['ass']}")
 
     async def process_early_video(self):
+        self._log(f"▶ 阶段 process_early_video 开始")
         if len(self.videos) == 1:
-            self.early_video_path = self.videos[0].flv_file_path
+            # 修复：flv_file_path 是方法，需要加括号调用得到路径字符串
+            self.early_video_path = self.videos[0].flv_file_path()
+            self._log(f"单片段直接复用原视频: {self.early_video_path}")
         format_check = True
         ref_video_res = self.videos[0].video_resolution
         for video in self.videos:
@@ -310,17 +405,28 @@ class Session:
                 format_check = False
                 break
         if not format_check:
+            self._log(f"[警告] 片段分辨率不一致（基准 {ref_video_res}），跳过早期视频合并")
             return
         ffmpeg_command = f'''ffmpeg -y \
         -f concat \
         -safe 0 \
         -i "{self.output_path()['concat_file']}" \
         -c copy "{self.output_path()['early_video']}" >> "{self.output_path()["video_log"]}" 2>&1'''
-        await async_wait_output(ffmpeg_command)
+        t0 = time.time()
+        returncode, _, _ = await async_wait_output(ffmpeg_command)
+        self._log(f"  早期视频合并退出码={returncode}（耗时 {time.time() - t0:.1f}s）")
+        if returncode != 0:
+            print(f"[警告] 早期视频合并失败 (退出码 {returncode})")
+            print_tail(self.output_path()['video_log'])
+            return
         self.early_video_path = self.output_path()['early_video']
+        self._log(f"✔ 阶段 process_early_video 完成: {self.early_video_path}")
 
     async def process_video(self):
         total_time = sum([video.video_length_flv for video in self.videos])
+        self._log(f"===== 阶段 process_video (弹幕版压制) 开始 =====")
+        self._log(f"输入: {len(self.videos)} 个片段, 总时长={total_time:.1f}s, "
+                  f"输出={self.output_path()['danmaku_video']}")
 
         # === 获取视频分辨率和帧率 ===
         # 假设第一个视频代表整个session的分辨率和帧率
@@ -331,6 +437,7 @@ class Session:
         video_fps = getattr(reference_video, 'video_fps', 30.0)  # 默认30fps
 
         video_res_x, video_res_y = self.get_resolution()
+        self._log(f"分辨率={video_res_x}x{video_res_y} 帧率={video_fps}fps")
 
         # === 根据分辨率和帧率计算推荐码率 ===
         # B站推荐码率参考：https://www.bilibili.com/read/cv17931353
@@ -383,6 +490,8 @@ class Session:
 
         # 确保码率在合理范围内
         video_bitrate = int(max(MIN_VIDEO_BITRATE, min(MAX_VIDEO_BITRATE, recommended_bitrate)))
+        self._log(f"码率={video_bitrate}Kbps (推荐基线={recommended_bitrate}, 帧率系数={fps_adjustment:.2f}, "
+                  f"范围 {MIN_VIDEO_BITRATE}~{MAX_VIDEO_BITRATE})")
 
         # ======== 核心优化：GPU 硬件检测与硬件加速策略 ========
         # 检测系统中是否存在独立显卡 (GPU)，使用 nvidia-smi 作为主要检测方式
@@ -401,52 +510,120 @@ class Session:
         encoder_params = " -c:v h264_nvenc -preset slow -threads 0 " if has_gpu else " -c:v libx264 -preset medium -threads 0 "
         # ========================================================
 
-        ffmpeg_command = f'''ffmpeg -y -loop 1 -t {total_time} \
-        -i "{self.output_path()['he_graph']}" \
+        # === 输入可用性检查与降级 ===
+        # 背景图（he_graph）可能因 danmaku_energy_map 失败而缺失，缺失时用纯黑背景，
+        # 保证压制流程不会被前置步骤的失败阻断
+        he_graph_path = self.output_path()['he_graph']
+        ass_path = self.output_path()['ass']
+        if os.path.exists(he_graph_path):
+            bg_input = f"-loop 1 -t {total_time} -i \"{he_graph_path}\""
+            self._log(f"背景图: 存在 {he_graph_path}")
+        else:
+            print(f"[警告] 高能背景图不存在: {he_graph_path}，压制将使用纯黑背景")
+            bg_input = f"-f lavfi -i color=c=black:s={video_res_x}x{video_res_y}:d={total_time}"
+            self._log(f"背景图: 缺失，降级为纯黑背景")
+
+        # 滤镜链主体（背景图动态入场效果，与原逻辑一致）
+        filter_base = f'''[1:v]scale={video_res_x}:{video_res_y}:force_original_aspect_ratio=decrease,pad={video_res_x}:{video_res_y}:-1:-1:color=black[v_fixed];
+[0:v][v_fixed]scale2ref=iw:iw*(main_h/main_w)[color][ref];
+[color]split[color1][color2];
+[color1]hue=s=0[gray];
+[color2]negate=negate_alpha=1[color_neg];
+[gray]negate=negate_alpha=1[gray_neg];
+color=black:d={total_time}[black];
+[black][ref]scale2ref[blackref][ref2];
+[blackref]split[blackref1][blackref2];
+[color_neg][blackref1]overlay=x=t/{total_time}*W-W[color_crop_neg];
+[gray_neg][blackref2]overlay=x=t/{total_time}*W[gray_crop_neg];
+[color_crop_neg]negate=negate_alpha=1[color_crop];
+[gray_crop_neg]negate=negate_alpha=1[gray_crop];
+[ref2][color_crop]overlay=y=main_h-overlay_h[out_color];
+[out_color][gray_crop]overlay=y=main_h-overlay_h[out]'''
+
+        # 弹幕字幕（.ass）可能因 DanmakuFactory 失败而缺失，缺失时跳过字幕滤镜
+        if os.path.exists(ass_path):
+            filter_complex = f"{filter_base};[out]ass='{ass_path}'[out_sub]"
+            video_map = "[out_sub]"
+            self._log(f"弹幕字幕: 存在 {ass_path}")
+        else:
+            print(f"[警告] 弹幕字幕文件不存在: {ass_path}，压制视频将不含弹幕字幕")
+            filter_complex = filter_base
+            video_map = "[out]"
+            self._log(f"弹幕字幕: 缺失，降级为无字幕")
+
+        ffmpeg_command = f'''ffmpeg -y {bg_input} \
         {hwaccel_decode}-f concat \
         -safe 0 \
         -i "{self.output_path()['concat_file']}" \
         -t {total_time} \
-        -filter_complex "
-        [1:v]scale={video_res_x}:{video_res_y}:force_original_aspect_ratio=decrease,pad={video_res_x}:{video_res_y}:-1:-1:color=black[v_fixed];
-        [0:v][v_fixed]scale2ref=iw:iw*(main_h/main_w)[color][ref];
-        [color]split[color1][color2];
-        [color1]hue=s=0[gray];
-        [color2]negate=negate_alpha=1[color_neg];
-        [gray]negate=negate_alpha=1[gray_neg];
-        color=black:d={total_time}[black];
-        [black][ref]scale2ref[blackref][ref2];
-        [blackref]split[blackref1][blackref2];
-        [color_neg][blackref1]overlay=x=t/{total_time}*W-W[color_crop_neg];
-        [gray_neg][blackref2]overlay=x=t/{total_time}*W[gray_crop_neg];
-        [color_crop_neg]negate=negate_alpha=1[color_crop];
-        [gray_crop_neg]negate=negate_alpha=1[gray_crop];
-        [ref2][color_crop]overlay=y=main_h-overlay_h[out_color];
-        [out_color][gray_crop]overlay=y=main_h-overlay_h[out];
-        [out]ass='{self.output_path()['ass']}'[out_sub]" \
-        -map "[out_sub]" -map 1:a ''' + \
+        -filter_complex "{filter_complex}" \
+        -map "{video_map}" -map 1:a ''' + \
                          encoder_params + \
                          f'-b:v {video_bitrate}K' + f''' -b:a 320K -ar 44100  "{self.output_path()['danmaku_video']}" \
                     ''' + f'>> "{self.output_path()["video_log"]}" 2>&1'
-        await async_wait_output(ffmpeg_command)
+        self._log(f"编码器={'h264_nvenc(GPU)' if has_gpu else 'libx264(CPU)'} "
+                  f"硬件解码={'是' if has_gpu else '否'}，开始压制...")
+        t0 = time.time()
+        returncode, _, _ = await async_wait_output(ffmpeg_command)
+        cost = time.time() - t0
+        if returncode != 0:
+            print(f"[压制失败] ffmpeg 退出码 {returncode}，详见 video.log")
+            print_tail(self.output_path()['video_log'])
+            self._log(f"✘ 弹幕版压制失败 (退出码 {returncode}, 耗时 {cost:.1f}s)")
+        else:
+            out_path = self.output_path()['danmaku_video']
+            size_mb = os.path.getsize(out_path) / 1024 / 1024 if os.path.exists(out_path) else 0
+            self._log(f"✔ 弹幕版压制完成: {out_path} (耗时 {cost:.1f}s, 大小 {size_mb:.1f}MB)")
 
     async def gen_early_video(self):
         if len(self.videos) == 0:
             print(f"No video in session for {self.room_id}@{self.start_time}, skip!")
             return
-        await self.merge_xml()
-        await self.clean_xml()
-        await self.process_xml()
-        await self.process_danmaku()
-        await self.process_thumbnail()
-        self.generate_concat()
-        await self.process_early_video()
+        total_dur = sum(v.video_length_flv for v in self.videos)
+        self._log(f"===== gen_early_video 开始（{len(self.videos)} 个片段，总时长 {total_dur:.1f}s）=====")
+        session_t0 = time.time()
+        # 每步独立 try/except：单步失败只打印告警，不阻断后续步骤，
+        # 确保 process_video（弹幕版压制）尽可能照常执行
+        async def safe_step(name, coro):
+            self._log(f"  ▶ 步骤 {name} 开始")
+            t0 = time.time()
+            try:
+                await coro
+                self._log(f"  ✔ 步骤 {name} 完成（耗时 {time.time() - t0:.1f}s）")
+            except Exception as e:
+                self._log(f"  ✘ 步骤 {name} 失败（耗时 {time.time() - t0:.1f}s）: {e}")
+                traceback.print_exc()
+
+        await safe_step("merge_xml", self.merge_xml())
+        await safe_step("clean_xml", self.clean_xml())
+        await safe_step("process_xml", self.process_xml())
+        await safe_step("process_danmaku", self.process_danmaku())
+        await safe_step("process_thumbnail", self.process_thumbnail())
+        try:
+            self._log("  ▶ 步骤 generate_concat 开始")
+            t0 = time.time()
+            self.generate_concat()
+            self._log(f"  ✔ 步骤 generate_concat 完成（耗时 {time.time() - t0:.1f}s）")
+        except Exception as e:
+            print(f"[警告] generate_concat 失败: {e}")
+            traceback.print_exc()
+        await safe_step("process_early_video", self.process_early_video())
+        self._log(f"===== gen_early_video 结束（总耗时 {time.time() - session_t0:.1f}s，"
+                  f"早期视频={'有' if self.early_video_path else '无'}）=====")
 
     async def gen_danmaku_video(self):
         if len(self.videos) == 0:
             print(f"No video in session for {self.room_id}@{self.start_time}, skip!")
             return
-        await self.process_video()
+        self._log(f"===== gen_danmaku_video (压制) 开始 =====")
+        session_t0 = time.time()
+        try:
+            await self.process_video()
+            self._log(f"===== gen_danmaku_video 完成（耗时 {time.time() - session_t0:.1f}s，"
+                      f"输出 {self.output_path()['danmaku_video']}）=====")
+        except Exception as e:
+            print(f"[压制异常] {self.room_id}@{self.session_id}: {e}")
+            traceback.print_exc()
 
     def load_danmaku_energy_data(self) -> list:
         """加载弹幕能量数据"""
@@ -498,12 +675,15 @@ class Session:
         if len(self.videos) == 0:
             print(f"No video in session for {self.room_id}@{self.start_time}, skip highlight generation!")
             return None
-        
+
         danmaku_video_path = self.output_path()['danmaku_video']
         if not os.path.exists(danmaku_video_path):
             print(f"Danmaku video not found: {danmaku_video_path}")
             return None
-        
+
+        self._log(f"===== gen_highlight_video 开始 =====")
+        session_t0 = time.time()
+
         # 合并默认配置和用户配置
         default_config = {
             'enabled': True,
@@ -516,16 +696,18 @@ class Session:
         }
         if highlight_config:
             default_config.update(highlight_config)
-        
+
         if not default_config.get('enabled', True):
             print("Highlight generation is disabled")
+            self._log("高光生成已禁用，跳过")
             return None
-        
+
         print(f"Generating highlight video for session {self.session_id}")
-        
+
         # 加载弹幕能量数据
         danmaku_data = self.load_danmaku_energy_data()
-        
+        self._log(f"已加载弹幕能量数据点 {len(danmaku_data)} 个")
+
         # 创建高光生成器并生成视频
         generator = HighlightGenerator(default_config)
         result = await generator.generate_highlight(
@@ -534,7 +716,7 @@ class Session:
             output_path=self.output_path()['highlight_video'],
             log_path=self.output_path()['highlight_log']
         )
-        
+
         if result:
             print(f"Highlight video generated: {result.video_path}")
             print(f"Highlight summary: {result.summary}")
@@ -543,9 +725,11 @@ class Session:
             with open(summary_path, 'w', encoding='utf-8') as f:
                 f.write(result.summary)
             print(f"Summary saved to: {summary_path}")
+            self._log(f"✔ 高光视频生成完成: {result.video_path}（耗时 {time.time() - session_t0:.1f}s）")
         else:
             print("Failed to generate highlight video")
-        
+            self._log(f"✘ 高光视频生成失败（耗时 {time.time() - session_t0:.1f}s）")
+
         return result
 
 

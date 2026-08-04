@@ -15,7 +15,7 @@ from bilibili_api import sync
 from comment_task import CommentTask
 from recorder_config import RecorderConfig, UploaderAccount
 from recorder_manager import RecorderManager
-from session import Session, Video
+from session import Session, Video, log_debug
 from subtitle_task import SubtitleTask
 from task_save import TaskSave
 from upload_task import UploadTask
@@ -233,6 +233,8 @@ class RecordUploadManager:
                 time.sleep(60)
 
     async def upload_video(self, session: Session):
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 进入处理流程 "
+                  f"（{len(session.videos)} 个片段，标题={session.room_title}）")
         await asyncio.sleep(WAIT_BEFORE_SESSION_MINUTES * 60)
         if len(session.videos) == 0:
             print(f"No video in session: {session.room_id}@{session.session_id}")
@@ -240,11 +242,28 @@ class RecordUploadManager:
         room_config = session.room_config
         if room_config.uploader_obj is None:
             print(f"No need to upload for {room_config.id}")
-            await session.gen_early_video()
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 分支=仅本地（无 uploader），"
+                      f"先生成早期视频，等待 {WAIT_SESSION_MINUTES} 分钟后压制")
+            # 关键修复：gen_early_video 任一步失败（如 danmaku_energy_map 依赖缺失）
+            # 都不能阻断后续的 gen_danmaku_video（弹幕版视频压制）
+            try:
+                await session.gen_early_video()
+            except Exception as e:
+                print(f"[警告] 生成早期视频失败，将继续压制流程: {e}")
+                traceback.print_exc()
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 进入等待期 "
+                      f"({WAIT_SESSION_MINUTES} 分钟) 后开始压制")
             await asyncio.sleep(WAIT_SESSION_MINUTES * 60)
-            await session.gen_danmaku_video()
+            try:
+                await session.gen_danmaku_video()
+            except Exception as e:
+                print(f"[压制失败] {session.room_id}@{session.session_id}: {e}")
+                traceback.print_exc()
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 仅本地分支处理结束")
             return
         uploader: UploaderAccount = room_config.uploader_obj
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 分支=上传 "
+                  f"(账号={uploader.name}, 频道={room_config.channel_id})")
         substitute_dict = {
             "name": session.room_name,
             "title": session.room_title,
@@ -275,7 +294,15 @@ class RecordUploadManager:
         with self.save_lock:
             self.save.video_name_history[session.session_id] = title
         description = Template(room_config.description).substitute(substitute_dict)
-        await session.gen_early_video()
+        # 早期视频（封面/高能时间/弹幕字幕/concat）生成失败时继续走压制与上传流程，
+        # 异常不再静默阻断后续 gen_danmaku_video
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 开始生成早期视频 "
+                  f"(标题={title})")
+        try:
+            await session.gen_early_video()
+        except Exception as e:
+            print(f"[警告] 生成早期视频失败，将继续上传/压制流程: {e}")
+            traceback.print_exc()
 
         # 构建插入数据库的数据模版
         base_db_task = {
@@ -299,6 +326,8 @@ class RecordUploadManager:
             db_task_early = base_db_task.copy()
             db_task_early.update({'video_path': session.early_video_path, 'danmaku': False})
             early_db_id = self.db_manager.insert_task(db_task_early) # 先入库，获取ID
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 早期视频已入队上传 "
+                      f"(db_id={early_db_id}, 路径={session.early_video_path})")
 
             early_upload_task = UploadTask(
                 session_id=session.session_id,
@@ -317,9 +346,18 @@ class RecordUploadManager:
                 db_id=early_db_id # 传入ID
             )
             self.video_upload_queue.put(early_upload_task)
+        else:
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 早期视频缺失，"
+                      f"未入队上传（可能生成阶段失败）")
 
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 早期视频上传任务已提交，"
+                  f"进入等待期 ({WAIT_SESSION_MINUTES} 分钟) 后开始弹幕版压制")
         await asyncio.sleep(WAIT_SESSION_MINUTES * 60)
-        await session.gen_danmaku_video()
+        try:
+            await session.gen_danmaku_video()
+        except Exception as e:
+            print(f"[压制失败] {session.room_id}@{session.session_id}: {e}")
+            traceback.print_exc()
 
         # 生成高光视频（使用全局配置）
         highlight_video_path = None
@@ -329,6 +367,7 @@ class RecordUploadManager:
         if self.config.highlight and self.config.highlight.enabled:
             print(f"Highlight generation enabled (global config)")
             highlight_config = self.config.highlight.to_dict()
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 开始生成高光视频")
             try:
                 highlight_result = await session.gen_highlight_video(highlight_config)
                 if highlight_result:
@@ -336,11 +375,15 @@ class RecordUploadManager:
                     highlight_summary = highlight_result.summary
                     print(f"Highlight video generated: {highlight_video_path}")
                     print(f"Highlight summary: {highlight_summary}")
+                    log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 高光视频已生成: "
+                              f"{highlight_video_path}")
                 else:
                     print("Failed to generate highlight video")
+                    log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 高光视频生成为空")
             except Exception as e:
                 print(f"Error generating highlight video: {e}")
                 traceback.print_exc()
+                log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 高光视频生成异常: {e}")
 
         db_task_danmaku = base_db_task.copy()
         db_task_danmaku.update({'video_path': session.output_path()['danmaku_video'], 'danmaku': True})
@@ -357,6 +400,9 @@ class RecordUploadManager:
             }, ensure_ascii=False)
 
         danmaku_db_id = self.db_manager.insert_task(db_task_danmaku) # 先入库，获取ID
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 弹幕版视频已入队上传 "
+                  f"(db_id={danmaku_db_id}, 路径={session.output_path()['danmaku_video']}"
+                  f"{', 含高光分P' if part_videos else ''})")
 
         danmaku_upload_task = UploadTask(
             session_id=session.session_id,
@@ -395,6 +441,10 @@ class RecordUploadManager:
                 highlight_summary=highlight_summary
             )
             self.comment_post_queue.put(comment_task)
+            log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 已提交评论任务"
+                      f"（含高光总结: {'是' if highlight_summary else '否'}）")
+
+        log_debug(f"[upload_video][{session.room_id}@{session.session_id}] 上传分支处理结束")
 
     async def handle_update(self, update_json: dict):
         if update_json["EventType"] not in [
@@ -437,6 +487,8 @@ class RecordUploadManager:
             elif update_json["EventType"] == "SessionEnded":
                 current_session.upload_task = \
                     asyncio.run_coroutine_threadsafe(self.upload_video(current_session), self.video_processing_loop)
+                log_debug(f"[handle_update] 收到 SessionEnded，已提交 upload_video 任务 "
+                          f"({current_session.room_id}@{current_session.session_id})")
 
     def db_poller(self):
         while True:
